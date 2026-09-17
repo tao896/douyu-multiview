@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>斗鱼多房间同屏</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<svg class="icon-sprite" aria-hidden="true">
+  <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="icon-copy" viewBox="0 0 24 24">
+    <rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>
+  </symbol>
+  <symbol id="icon-edit" viewBox="0 0 24 24">
+    <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/>
+  </symbol>
+  <symbol id="icon-trash" viewBox="0 0 24 24">
+    <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>
+  </symbol>
+  <symbol id="icon-download" viewBox="0 0 24 24">
+    <path d="M12 3v12M7 10l5 5 5-5M5 20h14"/>
+  </symbol>
+  <symbol id="icon-upload" viewBox="0 0 24 24">
+    <path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>
+  </symbol>
+  <symbol id="icon-grid" viewBox="0 0 24 24">
+    <rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/>
+    <rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>
+  </symbol>
+  <symbol id="icon-focus" viewBox="0 0 24 24">
+    <path d="M8 4H4v4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><circle cx="12" cy="12" r="3"/>
+  </symbol>
+  <symbol id="icon-leaf" viewBox="0 0 24 24">
+    <path d="M20 4C12 4 5 7 5 14a6 6 0 0 0 6 6c7 0 9-8 9-16Z"/><path d="M4 21c2-5 6-9 12-12"/>
+  </symbol>
+  <symbol id="icon-eye" viewBox="0 0 24 24">
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>
+  </symbol>
+  <symbol id="icon-eye-off" viewBox="0 0 24 24">
+    <path d="m3 3 18 18M10.6 5.1A12 12 0 0 1 12 5c6.5 0 10 7 10 7a20 20 0 0 1-3 3.8M6.5 6.5A20 20 0 0 0 2 12s3.5 7 10 7a12 12 0 0 0 5.5-1.5M10 10a3 3 0 0 0 4 4"/>
+  </symbol>
+  <symbol id="icon-volume" viewBox="0 0 24 24">
+    <path d="M5 9v6h4l5 4V5L9 9H5Z"/><path d="M17 9a4 4 0 0 1 0 6M19.5 6.5a8 8 0 0 1 0 11"/>
+  </symbol>
+  <symbol id="icon-volume-off" viewBox="0 0 24 24">
+    <path d="M5 9v6h4l5 4V5L9 9H5Z"/><path d="m17 10 4 4M21 10l-4 4"/>
+  </symbol>
+  <symbol id="icon-danmaku" viewBox="0 0 24 24">
+    <path d="M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4 3v-3H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/>
+    <path d="M7 10h10M7 14h7"/>
+  </symbol>
+  <symbol id="icon-danmaku-off" viewBox="0 0 24 24">
+    <path d="M8 18H5a2 2 0 0 1-2-2V8a2 2 0 0 1 .8-1.6M8 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-.7 1.5M12 18l-4 3v-7"/>
+    <path d="m4 4 16 16"/>
+  </symbol>
+  <symbol id="icon-reload" viewBox="0 0 24 24">
+    <path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8a7 7 0 0 1 11.5-1L20 12M4 12l2.4 5a7 7 0 0 0 11.5-1"/>
+  </symbol>
+  <symbol id="icon-activity" viewBox="0 0 24 24">
+    <path d="M3 12h4l2.5-6 4 12 2.5-6h5"/>
+  </symbol>
+  <symbol id="icon-data" viewBox="0 0 24 24">
+    <path d="M4 19V5M4 19h16"/>
+    <path d="M7 16v-4M11 16V8M15 16v-7M19 16v-3"/>
+  </symbol>
+  <symbol id="icon-help" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 1 1 3.2 2.3c-.7.3-1 1-1 1.7M12 17h.01"/>
+  </symbol>
+  <symbol id="icon-chevron-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+  <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+</svg>
+
+<header class="bar" id="topToolbar">
+  <button class="ghost mobile-rooms-btn" id="mobileRoomsBtn" type="button"
+          aria-controls="roomSidebar" aria-expanded="false">直播间</button>
+  <h1 class="logo">斗鱼同屏</h1>
+
+  <form class="add" id="addForm">
+    <textarea id="addInput" rows="1" autocomplete="off" spellcheck="false"
+              aria-label="添加直播间"
+              placeholder="输入房间号或地址；可粘贴多项"></textarea>
+    <button type="submit" id="addBtn">添加</button>
+  </form>
+
+  <div class="profile-tools" aria-label="观看方案">
+    <label class="field profile-field">
+      <span>方案</span>
+      <select id="workspaceSelect" aria-label="当前观看方案"></select>
+    </label>
+    <button class="ghost toolbar-icon-btn" id="workspaceNewBtn" type="button"
+            aria-label="新建" data-tooltip="新建观看方案">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-plus"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="workspaceCloneBtn" type="button"
+            aria-label="复制" data-tooltip="复制当前方案">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-copy"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="workspaceRenameBtn" type="button"
+            aria-label="改名" data-tooltip="重命名当前方案">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-edit"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn danger-ghost" id="workspaceDeleteBtn" type="button"
+            aria-label="删除" data-tooltip="删除当前方案">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-trash"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="backupBtn" type="button"
+            aria-label="备份" data-tooltip="备份（导出全部观看方案）">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-download"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="importBtn" type="button"
+            aria-label="导入" data-tooltip="导入观看方案">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-upload"/></svg>
+    </button>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
+  </div>
+
+  <div class="tools">
+    <label class="field">
+      <span>布局</span>
+      <select id="colsSelect" title="每行显示几个">
+        <option value="auto">自适应</option>
+        <option value="1">1 列</option>
+        <option value="2">2 列</option>
+        <option value="3">3 列</option>
+        <option value="4">4 列</option>
+        <option value="5">5 列</option>
+      </select>
+    </label>
+    <button class="ghost toolbar-icon-btn" id="layoutModeBtn" type="button" aria-pressed="false"
+            aria-label="焦点布局" data-tooltip="切换到焦点布局">
+      <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-grid"/></svg>
+      <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-focus"/></svg>
+    </button>
+    <select class="batch-rate" id="batchRateSelect" aria-label="批量清晰度" title="批量切换清晰度">
+      <option value="">批量清晰度</option>
+    </select>
+    <button class="ghost toolbar-icon-btn" id="hideOfflineBtn" type="button" aria-pressed="false"
+            aria-controls="grid" aria-label="隐藏未开播窗口" data-tooltip="隐藏未开播窗口，开播后自动显示">
+      <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-eye-off"/></svg>
+      <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-eye"/></svg>
+    </button>
+    <label class="field danmaku-speed-field">
+      <span>弹幕速度</span>
+      <select id="danmakuSpeedSelect" aria-label="全局弹幕速度" title="调整所有直播窗口的弹幕速度">
+        <option value="0.5">0.5×</option>
+        <option value="0.75">0.75×</option>
+        <option value="1">1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2×</option>
+      </select>
+    </label>
+    <button class="ghost toolbar-icon-btn" id="ecoModeBtn" type="button" aria-pressed="false"
+            aria-label="低负载" data-tooltip="低负载模式">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-leaf"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="muteAllBtn" type="button" aria-pressed="false"
+            aria-label="全部静音" data-tooltip="全部静音">
+      <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-volume"/></svg>
+      <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-volume-off"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="danmakuAllBtn" type="button" aria-pressed="false"
+            aria-label="弹幕全关" data-tooltip="弹幕全关">
+      <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-danmaku-off"/></svg>
+      <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-danmaku"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="reloadAllBtn" type="button"
+            aria-label="刷新" data-tooltip="重载全部直播窗口">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-reload"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn health" id="diagnosticsBtn" type="button"
+            aria-label="状态 0/0" data-tooltip="连接与性能诊断：播放 0/0">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-activity"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="helpBtn" type="button"
+            aria-label="快捷键帮助" data-tooltip="快捷键帮助">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-help"/></svg>
+    </button>
+  </div>
+
+  <button class="ghost toolbar-icon-btn toolbar-hide-btn" id="toolbarHideBtn" type="button"
+          aria-controls="topToolbar" aria-expanded="true"
+          aria-label="完全隐藏头部工具栏" data-tooltip="完全隐藏头部工具栏（T）">
+    <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevron-up"/></svg>
+  </button>
+
+  <div class="solo-bar" id="soloBar" hidden>
+    <span>正在独听：<strong id="soloLabel"></strong></span>
+    <button type="button" id="soloExitBtn">退出独听</button>
+  </div>
+</header>
+
+<button class="toolbar-reveal" id="toolbarRevealBtn" type="button"
+        aria-controls="topToolbar" aria-expanded="false"
+        title="显示头部工具栏（T）" aria-label="显示头部工具栏">
+  <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
+</button>
+
+<div class="toolbar-tooltip" id="toolbarTooltip" role="tooltip" hidden></div>
+
+<div class="workspace" id="workspace">
+  <button class="sidebar-backdrop" id="sidebarBackdrop" type="button"
+          aria-label="关闭直播间抽屉" tabindex="-1"></button>
+  <aside class="sidebar" id="roomSidebar" aria-label="已添加的直播间">
+    <div class="sidebar-head">
+      <div class="sidebar-heading">
+        <span>直播间</span>
+        <span class="room-count" id="roomCount">0</span>
+      </div>
+      <div class="sidebar-head-actions">
+        <button class="sidebar-toggle sidebar-hide" id="sidebarHideBtn" type="button"
+                aria-controls="roomSidebar" title="完全隐藏直播间列表" aria-label="完全隐藏直播间列表">«</button>
+        <button class="sidebar-toggle" id="sidebarToggle" type="button"
+                aria-controls="roomSidebar" aria-expanded="true" title="收起直播间列表">‹</button>
+      </div>
+    </div>
+
+    <div class="sidebar-tools">
+      <input id="roomSearch" type="search" autocomplete="off" placeholder="搜索标题、主播或房间号"
+             aria-label="搜索直播间">
+      <div class="sidebar-tool-row">
+        <select id="roomFilter" aria-label="筛选直播间状态">
+          <option value="all">全部</option>
+          <option value="live" selected>已开播</option>
+          <option value="offline">未开播</option>
+          <option value="open">已打开</option>
+        </select>
+        <button class="ghost" id="batchToggleBtn" type="button">批量</button>
+      </div>
+    </div>
+
+    <nav class="room-list" id="roomList" aria-label="直播间快捷入口"></nav>
+    <p class="room-list-empty" id="roomListEmpty">添加直播间后会显示在这里</p>
+
+    <div class="sidebar-legend" aria-label="直播状态说明">
+      <span><i class="status-dot live"></i>已开播</span>
+      <span><i class="status-dot offline"></i>未开播</span>
+    </div>
+
+    <div class="batch-bar" id="batchBar" hidden>
+      <div class="batch-summary">已选 <strong id="batchCount">0</strong> 个</div>
+      <div class="batch-actions">
+        <button type="button" data-batch-act="visible">选择当前结果</button>
+        <button type="button" data-batch-act="live">选择已开播</button>
+        <button type="button" data-batch-act="open">打开所选</button>
+        <button type="button" data-batch-act="close">关闭窗口</button>
+        <button class="danger" type="button" data-batch-act="delete">删除所选</button>
+      </div>
+    </div>
+  </aside>
+
+  <button class="sidebar-reveal" id="sidebarRevealBtn" type="button"
+          aria-controls="roomSidebar" title="显示直播间列表" aria-label="显示直播间列表">›</button>
+
+  <div class="content">
+    <main id="grid" class="grid" data-cols="auto"></main>
+
+    <section class="empty" id="empty">
+      <p class="empty-title" id="emptyTitle">还没有直播间</p>
+      <p id="emptyHint">在上方粘贴斗鱼直播间地址（如 <code>https://www.douyu.com/9999</code>）或直接输入房间号，回车添加。</p>
+      <p class="dim" id="emptyDetail">可添加多个房间同屏观看，每个窗口的音量和弹幕独立控制；拖动窗口标题栏可调整顺序。</p>
+    </section>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+<!-- 单个直播窗口的结构模板 -->
+<template id="tileTpl">
+  <article class="tile" draggable="false">
+    <div class="tile-head" data-drag-handle>
+      <img class="avatar" data-avatar alt="">
+      <div class="meta">
+        <a class="title" data-title target="_blank" rel="noopener noreferrer" draggable="false">加载中…</a>
+        <div class="sub"><span data-nickname></span><span class="rid" data-rid></span></div>
+      </div>
+      <span class="badge" data-status aria-live="polite">连接中</span>
+      <div class="head-actions">
+        <button class="icon" data-act="focus" title="设为焦点画面" aria-label="设为焦点画面">◎</button>
+        <button class="icon" data-act="data" title="查看今日数据" aria-label="查看今日数据">
+          <svg class="tile-icon" aria-hidden="true"><use href="#icon-data"/></svg>
+        </button>
+        <button class="icon" data-act="pip" title="画中画" aria-label="进入画中画" hidden>▣</button>
+        <button class="icon" data-act="expand" title="放大 / 还原">⤢</button>
+        <button class="icon" data-act="reload" title="重新加载">↻</button>
+        <button class="icon danger" data-act="remove" title="关闭窗口" aria-label="关闭窗口">✕</button>
+      </div>
+    </div>
+
+    <div class="stage" data-stage>
+      <video data-video playsinline muted></video>
+      <canvas class="danmaku" data-danmaku></canvas>
+      <div class="overlay" data-overlay hidden>
+        <div class="overlay-msg" data-overlay-msg role="status" aria-live="polite"></div>
+        <button class="retry" data-act="reload" data-retry-btn>重试</button>
+        <button class="retry" data-act="play" data-play-btn hidden>▶ 点击播放</button>
+      </div>
+    </div>
+
+    <div class="tile-foot">
+      <button class="icon" data-act="mute" title="静音 / 取消静音" aria-label="静音 / 取消静音">🔇</button>
+      <input class="vol" type="range" min="0" max="100" step="1" data-volume title="音量">
+      <span class="vol-num" data-volnum>0</span>
+
+      <button class="chip" data-act="danmaku" title="弹幕开关" aria-label="弹幕开关">弹幕</button>
+      <input class="opa" type="range" min="20" max="100" step="5" data-opacity title="弹幕不透明度">
+
+      <button class="chip solo" data-act="solo" title="只听这个直播间" aria-label="独听">独听</button>
+      <select class="rate" data-rate title="清晰度"></select>
+      <button class="icon" data-act="fullscreen" title="全屏">⛶</button>
+    </div>
+  </article>
+</template>
+
+<!-- 左侧直播间快捷入口 -->
+<template id="roomShortcutTpl">
+  <div class="room-row">
+    <label class="room-select" title="选择直播间">
+      <input type="checkbox" data-side-select aria-label="选择直播间">
+    </label>
+    <button class="room-shortcut" type="button" data-side-open>
+      <span class="status-dot checking" data-side-dot aria-hidden="true"></span>
+      <span class="room-avatar">
+        <img data-side-avatar alt="" hidden>
+        <span data-side-initial>鱼</span>
+      </span>
+      <span class="room-side-meta">
+        <strong data-side-title>加载中…</strong>
+        <span class="room-side-sub">
+          <span data-side-state>检测中</span>
+          <span data-side-rid></span>
+        </span>
+      </span>
+    </button>
+    <div class="room-row-actions">
+      <button class="room-notify" type="button" data-side-notify title="开播提醒" aria-label="开播提醒" aria-pressed="false">🔔</button>
+      <button class="room-move" type="button" data-side-move="-1" title="上移">↑</button>
+      <button class="room-move" type="button" data-side-move="1" title="下移">↓</button>
+      <button class="room-delete" type="button" data-side-delete title="从列表删除">✕</button>
+    </div>
+  </div>
+</template>
+
+<dialog class="modal" id="confirmDialog" aria-labelledby="confirmTitle">
+  <form method="dialog">
+    <h2 id="confirmTitle">请确认</h2>
+    <p id="confirmMessage"></p>
+    <div class="modal-actions">
+      <button class="ghost" value="cancel">取消</button>
+      <button class="primary" id="confirmSubmit" value="confirm">确认</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal import-modal" id="importDialog" aria-labelledby="importTitle">
+  <form method="dialog">
+    <h2 id="importTitle">导入配置</h2>
+    <p id="importSummary"></p>
+    <label class="choice"><input type="radio" name="importMode" value="merge" checked> 合并为新方案（推荐）</label>
+    <label class="choice"><input type="radio" name="importMode" value="replace"> 替换全部配置（会先自动备份）</label>
+    <div class="modal-actions">
+      <button class="ghost" value="cancel">取消</button>
+      <button class="primary" value="confirm">导入</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal diagnostics-modal" id="diagnosticsDialog" aria-labelledby="diagnosticsTitle">
+  <form method="dialog">
+    <h2 id="diagnosticsTitle">连接与性能诊断</h2>
+    <p id="diagnosticsSummary"></p>
+    <div class="diagnostics-list" id="diagnosticsList"></div>
+    <div class="modal-actions split-actions">
+      <button class="ghost" id="copyDiagnosticsBtn" type="button">复制诊断</button>
+      <button class="ghost" id="retryFailedBtn" type="button">重试失败窗口</button>
+      <button class="primary" value="confirm">关闭</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal room-data-modal" id="roomDataDialog" aria-labelledby="roomDataTitle">
+  <div class="room-data-head">
+    <div class="room-data-heading">
+      <h2 id="roomDataTitle" data-data-title>今日数据</h2>
+      <p data-data-room></p>
+    </div>
+    <button class="ghost" type="button" data-data-close aria-label="关闭数据" autofocus>关闭</button>
+  </div>
+  <div class="room-data-body">
+    <div class="room-data-frame" data-data-frame></div>
+    <p class="room-data-status" data-data-status role="status" aria-live="polite" hidden></p>
+  </div>
+  <div class="room-data-footer">
+    <p>数据来源：在看直播。若需登录或页面未显示，请在新标签页打开，登录后刷新。</p>
+    <div class="room-data-actions">
+      <button class="ghost" type="button" data-data-refresh>刷新数据</button>
+      <a class="ghost" data-data-link target="_blank" rel="noopener noreferrer">在新标签页打开 ↗</a>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="modal" id="workspaceNameDialog" aria-labelledby="workspaceNameTitle">
+  <form method="dialog">
+    <h2 id="workspaceNameTitle">观看方案名称</h2>
+    <label class="modal-field">
+      <span>名称</span>
+      <input id="workspaceNameInput" maxlength="40" autocomplete="off" required>
+    </label>
+    <div class="modal-actions">
+      <button class="ghost" value="cancel">取消</button>
+      <button class="primary" value="confirm">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal result-modal" id="batchResultDialog" aria-labelledby="batchResultTitle">
+  <form method="dialog">
+    <h2 id="batchResultTitle">批量添加结果</h2>
+    <p id="batchResultSummary"></p>
+    <details id="batchFailureDetails">
+      <summary>查看失败详情</summary>
+      <ul id="batchFailureList"></ul>
+    </details>
+    <div class="modal-actions">
+      <button class="primary" value="confirm">知道了</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal help-modal" id="helpDialog" aria-labelledby="helpTitle">
+  <form method="dialog">
+    <h2 id="helpTitle">快捷键</h2>
+    <dl class="shortcut-list">
+      <div><dt><kbd>A</kbd></dt><dd>聚焦添加房间</dd></div>
+      <div><dt><kbd>/</kbd></dt><dd>聚焦房间搜索</dd></div>
+      <div><dt><kbd>B</kbd></dt><dd>展开或收起侧栏</dd></div>
+      <div><dt><kbd>T</kbd></dt><dd>隐藏或显示头部工具栏</dd></div>
+      <div><dt><kbd>M</kbd></dt><dd>全部静音 / 取消静音</dd></div>
+      <div><dt><kbd>D</kbd></dt><dd>弹幕全开 / 全关</dd></div>
+      <div><dt><kbd>R</kbd></dt><dd>刷新所有窗口</dd></div>
+      <div><dt><kbd>1–9</kbd></dt><dd>独听对应窗口</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>关闭面板或清除搜索</dd></div>
+    </dl>
+    <div class="modal-actions">
+      <button class="primary" value="confirm">关闭</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/vendor/mpegts.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

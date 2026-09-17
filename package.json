@@ -1,0 +1,24 @@
+{
+  "name": "douyu-multiview",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "description": "斗鱼多直播间同屏观看",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "build:extension": "node build-extension.js",
+    "test": "node --test",
+    "test:e2e": "playwright test",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "dependencies": {
+    "mpegts.js": "1.8.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}

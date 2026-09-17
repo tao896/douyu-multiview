@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "斗鱼多房间同屏",
+  "short_name": "斗鱼同屏",
+  "version": "1.0.1",
+  "description": "同屏观看多个斗鱼直播间，独立控制音量、弹幕、清晰度和布局。",
+  "permissions": ["notifications"],
+  "host_permissions": [
+    "https://douyu.com/*",
+    "https://*.douyu.com/*",
+    "https://*.douyucdn.cn/*",
+    "https://www.doseeing.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "打开斗鱼多房间同屏",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src https://www.doseeing.com"
+  }
+}
