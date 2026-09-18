@@ -7,15 +7,18 @@ import {
   STORAGE_KEY_V1,
   STORAGE_KEY_V2,
   STORAGE_KEY_V3,
+  autoScrollDelta,
   cloneWorkspace,
   createBackup,
   createWorkspace,
+  dropPositionForPoint,
   mapWithConcurrency,
   normalizeAppState,
   normalizeRoomState,
   parseBatchInput,
   parseBackup,
   prepareImportedWorkspaces,
+  reorderRooms,
   roomMatches,
 } from './state.js';
 
@@ -87,6 +90,7 @@ let batchMode = false;
 let mobileSidebarOpen = false;
 let savingBlocked = false;
 let dragging = null;
+let roomDrag = null;
 let soloTile = null;
 let soloSnapshot = new Map();
 let scheduler = null;
@@ -411,13 +415,12 @@ function createSidebarEntry(room) {
   const q = (selector) => el.querySelector(selector);
   const entry = {
     el,
+    drag: q('[data-side-drag]'),
     selectWrap: q('.room-select'),
     select: q('[data-side-select]'),
     open: q('[data-side-open]'),
     remove: q('[data-side-delete]'),
     notify: q('[data-side-notify]'),
-    moveUp: q('[data-side-move="-1"]'),
-    moveDown: q('[data-side-move="1"]'),
     dot: q('[data-side-dot]'),
     avatar: q('[data-side-avatar]'),
     initial: q('[data-side-initial]'),
@@ -426,11 +429,22 @@ function createSidebarEntry(room) {
     rid: q('[data-side-rid]'),
   };
   entry.avatar.addEventListener('error', () => (entry.avatar.hidden = true));
+  entry.avatar.draggable = false;
   entry.open.addEventListener('click', () => openRoomFromSidebar(room));
   entry.remove.addEventListener('click', () => deleteRoom(room));
   entry.notify.addEventListener('click', () => toggleRoomNotification(room));
-  entry.moveUp.addEventListener('click', () => moveRoom(room, -1));
-  entry.moveDown.addEventListener('click', () => moveRoom(room, 1));
+  // 拖动把手和头像/名称区域都能排序；提醒、删除、选择按钮不参与拖动
+  entry.drag.addEventListener('pointerdown', (event) => startRoomDrag(room, event));
+  entry.open.addEventListener('pointerdown', (event) => startRoomDrag(room, event));
+  // 原生图片拖拽会盖住指针事件，直接禁用
+  el.addEventListener('dragstart', (event) => event.preventDefault());
+  // 手柄是按钮，键盘用户也能用上下方向键调整顺序
+  entry.drag.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowUp') moveRoom(room, -1);
+    else if (event.key === 'ArrowDown') moveRoom(room, 1);
+    else return;
+    event.preventDefault();
+  });
   entry.select.addEventListener('change', () => {
     room.selected = entry.select.checked;
     syncBatchControls();
@@ -448,7 +462,6 @@ function syncSidebarRoom(room) {
   const stateText = room.live === true ? '已开播' : room.live === false ? '未开播' : '检测中';
   const stateClass = room.live === true ? 'live' : room.live === false ? 'offline' : 'checking';
   const action = openTile ? '定位' : '打开';
-  const index = rooms.indexOf(room);
 
   entry.el.hidden = !isRoomVisible(room);
   entry.el.dataset.rid = room.s.rid;
@@ -459,10 +472,14 @@ function syncSidebarRoom(room) {
   entry.open.title = `${action} ${title} · ${stateText} · 房间 ${room.s.rid}`;
   entry.open.setAttribute('aria-label', `${action} ${title}，${stateText}，房间 ${room.s.rid}`);
   entry.remove.setAttribute('aria-label', `从当前方案删除 ${title}`);
-  entry.notify.classList.toggle('on', !!room.s.notifyOnLive);
-  entry.notify.setAttribute('aria-pressed', String(!!room.s.notifyOnLive));
-  entry.notify.title = room.s.notifyOnLive ? '关闭开播提醒' : '开启开播提醒';
-  entry.notify.setAttribute('aria-label', `${room.s.notifyOnLive ? '关闭' : '开启'} ${title} 的开播提醒`);
+  entry.drag.setAttribute('aria-label', `拖动调整 ${title} 的顺序`);
+  entry.drag.title = '拖动调整顺序';
+  // 提醒开关的真实状态只以 room.s.notifyOnLive 为准，按钮高亮与提示始终同步
+  const notifyOn = !!room.s.notifyOnLive;
+  entry.notify.classList.toggle('on', notifyOn);
+  entry.notify.setAttribute('aria-pressed', String(notifyOn));
+  entry.notify.title = notifyOn ? '关闭开播提醒' : '开启开播提醒';
+  entry.notify.setAttribute('aria-label', `${notifyOn ? '关闭' : '开启'} ${title} 的开播提醒`);
   entry.select.setAttribute('aria-label', `选择 ${title}`);
   entry.select.checked = room.selected;
   entry.selectWrap.hidden = !batchMode;
@@ -471,8 +488,6 @@ function syncSidebarRoom(room) {
   entry.state.textContent = stateText;
   entry.rid.textContent = `#${room.s.rid}`;
   entry.initial.textContent = [...(room.s.nickname || title || '鱼')][0] || '鱼';
-  entry.moveUp.disabled = index <= 0;
-  entry.moveDown.disabled = index >= rooms.length - 1;
 
   const avatar = room.s.avatar || '';
   if (entry.avatar.dataset.src !== avatar) {
@@ -509,16 +524,157 @@ function syncRoomListOrder() {
   syncAllSidebarRooms();
 }
 
+function clearRoomDropMarks() {
+  roomList.querySelectorAll('.drop-before, .drop-after')
+    .forEach((node) => node.classList.remove('drop-before', 'drop-after'));
+}
+
 function moveRoom(room, delta) {
   const from = rooms.indexOf(room);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= rooms.length) return;
-  rooms.splice(from, 1);
-  rooms.splice(to, 0, room);
+  const target = rooms[from + delta];
+  if (from < 0 || !target) return;
+  applyRoomOrder(reorderRooms(rooms, room, target, delta < 0 ? 'before' : 'after'));
+}
+
+// 排序后同时更新侧栏、已打开的窗口顺序并持久化。
+function applyRoomOrder(next) {
+  if (next.length !== rooms.length || next.every((room, index) => rooms[index] === room)) return;
+  rooms.splice(0, rooms.length, ...next);
   syncRoomListOrder();
   syncOpenTilesToRoomOrder();
   save();
 }
+
+// —— 侧栏拖动排序 ——
+// 只按当前可见行的中点判断插入位置：筛选状态下把房间放到目标房间旁边，
+// 其余（含被筛掉的）房间保持原有相对顺序。
+function resolveRoomDrop(clientY) {
+  const visible = visibleRooms()
+    .map((room) => ({ room, el: roomEntries.get(room)?.el }))
+    .filter((item) => item.el && !item.el.hidden);
+  if (!visible.length) return null;
+  let target = visible[visible.length - 1];
+  let position = 'after';
+  for (const item of visible) {
+    const rect = item.el.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      target = item;
+      position = 'before';
+      break;
+    }
+  }
+  return { target: target.room, position };
+}
+
+function showRoomDropMark(target, position) {
+  clearRoomDropMarks();
+  roomEntries.get(target)?.el.classList.add(position === 'before' ? 'drop-before' : 'drop-after');
+}
+
+function autoScrollRoomList() {
+  if (!roomDrag) return;
+  const rect = roomList.getBoundingClientRect();
+  const delta = autoScrollDelta(roomDrag.y, rect.top, rect.bottom);
+  if (!delta) return;
+  const before = roomList.scrollTop;
+  roomList.scrollTop += delta;
+  return roomList.scrollTop !== before;
+}
+
+function updateRoomDrag(clientY) {
+  if (!roomDrag) return;
+  roomDrag.y = clientY;
+  autoScrollRoomList();
+  const drop = resolveRoomDrop(clientY);
+  roomDrag.target = drop?.target || null;
+  roomDrag.position = drop?.position || 'after';
+  if (drop) showRoomDropMark(drop.target, drop.position);
+  else clearRoomDropMarks();
+}
+
+function autoScrollTick() {
+  if (!roomDrag) return;
+  autoScrollRoomList();
+  const drop = resolveRoomDrop(roomDrag.y);
+  if (drop) {
+    roomDrag.target = drop.target;
+    roomDrag.position = drop.position;
+    showRoomDropMark(drop.target, drop.position);
+  }
+  roomDrag.raf = requestAnimationFrame(autoScrollTick);
+}
+
+function endRoomDrag({ commit = true } = {}) {
+  if (!roomDrag) return;
+  cancelAnimationFrame(roomDrag.raf);
+  const { room, target, position } = roomDrag;
+  roomDrag = null;
+  document.body.classList.remove('room-dragging');
+  roomEntries.get(room)?.el.classList.remove('dragging');
+  clearRoomDropMarks();
+  if (!commit || !target || target === room) return;
+  applyRoomOrder(reorderRooms(rooms, room, target, position));
+}
+
+function startRoomDrag(room, event) {
+  if (event.button !== 0 && event.pointerType === 'mouse') return;
+  const entry = roomEntries.get(room);
+  if (!entry || entry.el.hidden) return;
+  // 阻止默认行为，避免拖动过程中选中文本或触发点击打开房间
+  event.preventDefault();
+  roomDrag = {
+    room,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    x: event.clientX,
+    y: event.clientY,
+    target: null,
+    position: 'after',
+    raf: 0,
+    moved: false,
+  };
+  entry.drag.setPointerCapture?.(event.pointerId);
+  document.body.classList.add('room-dragging');
+  entry.el.classList.add('dragging');
+}
+
+function onRoomDragMove(event) {
+  if (!roomDrag || event.pointerId !== roomDrag.pointerId) return;
+  event.preventDefault();
+  if (!roomDrag.moved) {
+    if (Math.hypot(event.clientX - roomDrag.startX, event.clientY - roomDrag.startY) < 4) return;
+    roomDrag.moved = true;
+    roomDrag.raf = requestAnimationFrame(autoScrollTick);
+  }
+  updateRoomDrag(event.clientY);
+}
+
+function onRoomDragEnd(event) {
+  if (!roomDrag || event.pointerId !== roomDrag.pointerId) return;
+  const moved = roomDrag.moved;
+  endRoomDrag();
+  // 拖动结束后浏览器可能补发一次 click（触屏尤其明显）；吞掉紧接着的那一次，
+  // 避免拖动结束时误触打开房间、提醒或删除。下一次 pointerdown 会解除标记，
+  // 因此不会影响随后的正常点击。
+  if (moved) suppressNextRoomClick = true;
+}
+
+// 一次真实拖动后的 click 不应触发任何行内操作（打开、提醒、删除）
+let suppressNextRoomClick = false;
+
+document.addEventListener('pointerdown', () => { suppressNextRoomClick = false; }, true);
+document.addEventListener('click', (event) => {
+  if (!suppressNextRoomClick) return;
+  suppressNextRoomClick = false;
+  if (!event.target.closest?.('.room-row')) return;
+  event.stopPropagation();
+  event.preventDefault();
+}, true);
+
+document.addEventListener('pointermove', onRoomDragMove, { passive: false });
+document.addEventListener('pointerup', onRoomDragEnd);
+document.addEventListener('pointercancel', () => endRoomDrag({ commit: false }));
 
 function syncOpenTilesToRoomOrder() {
   const desired = rooms.map(getOpenTile).filter(Boolean);

@@ -70,6 +70,15 @@
   </symbol>
   <symbol id="icon-chevron-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
   <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="icon-grip" viewBox="0 0 24 24">
+    <circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/>
+    <circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/>
+    <circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>
+  </symbol>
+  <symbol id="icon-bell" viewBox="0 0 24 24">
+    <path d="M12 3a5.5 5.5 0 0 0-5.5 5.5v3.2L5 15.5h14l-1.5-3.8V8.5A5.5 5.5 0 0 0 12 3Z"/>
+    <path d="M9.8 18.4a2.4 2.4 0 0 0 4.4 0"/>
+  </symbol>
 </svg>
 
 <header class="bar" id="topToolbar">
@@ -317,6 +326,10 @@
 <!-- 左侧直播间快捷入口 -->
 <template id="roomShortcutTpl">
   <div class="room-row">
+    <button class="room-drag" type="button" data-side-drag
+            title="拖动调整顺序" aria-label="拖动调整顺序">
+      <svg class="room-icon" aria-hidden="true"><use href="#icon-grip"/></svg>
+    </button>
     <label class="room-select" title="选择直播间">
       <input type="checkbox" data-side-select aria-label="选择直播间">
     </label>
@@ -335,10 +348,10 @@
       </span>
     </button>
     <div class="room-row-actions">
-      <button class="room-notify" type="button" data-side-notify title="开播提醒" aria-label="开播提醒" aria-pressed="false">🔔</button>
-      <button class="room-move" type="button" data-side-move="-1" title="上移">↑</button>
-      <button class="room-move" type="button" data-side-move="1" title="下移">↓</button>
-      <button class="room-delete" type="button" data-side-delete title="从列表删除">✕</button>
+      <button class="room-notify" type="button" data-side-notify title="开播提醒" aria-label="开播提醒" aria-pressed="false">
+        <svg class="room-icon" aria-hidden="true"><use href="#icon-bell"/></svg>
+      </button>
+      <button class="room-delete" type="button" data-side-delete title="从列表删除" aria-label="从列表删除">✕</button>
     </div>
   </div>
 </template>

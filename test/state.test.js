@@ -2,15 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BACKUP_FORMAT,
+  autoScrollDelta,
   cloneWorkspace,
   createBackup,
+  dropPositionForPoint,
   mapWithConcurrency,
-  moveByIndex,
   normalizeAppState,
   normalizeRoomState,
   parseBackup,
   parseBatchInput,
   prepareImportedWorkspaces,
+  reorderRooms,
   roomMatches,
 } from '../public/state.js';
 
@@ -149,6 +151,46 @@ test('filters rooms without changing source order', () => {
   assert.deepEqual(rooms.filter((room) => roomMatches(room, '甲', 'all')), [rooms[0]]);
   assert.deepEqual(rooms.filter((room) => roomMatches(room, '', 'offline')), [rooms[1]]);
   assert.deepEqual(rooms.filter((room) => roomMatches(room, '', 'open', room === rooms[1])), [rooms[1]]);
-  assert.deepEqual(moveByIndex(rooms, 0, 1), [rooms[1], rooms[0]]);
   assert.deepEqual(rooms[0].s.rid, '1');
+});
+
+test('reorders rooms by drag target without mutating the source array', () => {
+  const rooms = ['a', 'b', 'c', 'd'].map((rid) => ({ rid }));
+  assert.deepEqual(reorderRooms(rooms, rooms[0], rooms[2], 'after').map((r) => r.rid), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(reorderRooms(rooms, rooms[3], rooms[0], 'before').map((r) => r.rid), ['d', 'a', 'b', 'c']);
+  // 拖到自身或未知目标时不改变顺序
+  assert.deepEqual(reorderRooms(rooms, rooms[1], rooms[1], 'before'), rooms);
+  assert.deepEqual(reorderRooms(rooms, rooms[1], { rid: 'missing' }, 'after'), rooms);
+  // 源数组保持原样
+  assert.deepEqual(rooms.map((r) => r.rid), ['a', 'b', 'c', 'd']);
+});
+
+test('inserting relative to a filtered room keeps hidden rooms in relative order', () => {
+  // 列表顺序 a b c d e，筛选后只剩 a d；把 e 插到 a 之后
+  const rooms = ['a', 'b', 'c', 'd', 'e'].map((rid) => ({ rid }));
+  const next = reorderRooms(rooms, rooms[4], rooms[0], 'after');
+  assert.deepEqual(next.map((r) => r.rid), ['a', 'e', 'b', 'c', 'd']);
+  // 被筛掉的 b c 相对顺序不变，且仍夹在 a 与 d 之间
+  assert.ok(next.indexOf(rooms[1]) < next.indexOf(rooms[2]));
+  assert.ok(next.indexOf(rooms[0]) < next.indexOf(rooms[1]));
+  assert.ok(next.indexOf(rooms[2]) < next.indexOf(rooms[3]));
+});
+
+test('computes drop position from the row midpoint', () => {
+  assert.equal(dropPositionForPoint(10, 0, 40), 'before');
+  assert.equal(dropPositionForPoint(30, 0, 40), 'after');
+  assert.equal(dropPositionForPoint(20, 0, 40), 'after');
+  assert.equal(dropPositionForPoint(5, 100, 0), 'after');
+});
+
+test('auto-scrolls only near the list edges and caps the speed', () => {
+  // 列表 100~500，边距 52：中间不滚动，越靠边越快
+  assert.equal(autoScrollDelta(300, 100, 500), 0);
+  assert.equal(autoScrollDelta(200, 100, 500), 0);
+  assert.ok(autoScrollDelta(110, 100, 500) < 0);
+  assert.ok(autoScrollDelta(490, 100, 500) > 0);
+  assert.equal(autoScrollDelta(0, 100, 500), -16);
+  assert.equal(autoScrollDelta(1000, 100, 500), 16);
+  // 非法尺寸不滚动
+  assert.equal(autoScrollDelta(10, 100, 100), 0);
 });

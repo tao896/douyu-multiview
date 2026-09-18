@@ -252,11 +252,37 @@ export function roomMatches(room, query, filter, isOpen = false) {
     .some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(needle));
 }
 
-export function moveByIndex(items, index, delta) {
-  const next = [...items];
-  const target = index + delta;
-  if (index < 0 || index >= next.length || target < 0 || target >= next.length) return next;
-  const [item] = next.splice(index, 1);
-  next.splice(target, 0, item);
+// 拖动排序：把 moved 插到 target 的前/后。筛选时只看得见部分房间，
+// 但这里操作的是完整数组，因此未显示的房间仍保持原有相对顺序。
+export function reorderRooms(rooms, moved, target, position = 'after') {
+  const source = Array.from(rooms || []);
+  const from = source.indexOf(moved);
+  if (from < 0 || moved === target) return source;
+  const next = source.filter((item) => item !== moved);
+  const at = next.indexOf(target);
+  if (at < 0) return source;
+  next.splice(position === 'before' ? at : at + 1, 0, moved);
   return next;
+}
+
+// 指针落在行的上半还是下半，决定插到目标房间之前还是之后。
+export function dropPositionForPoint(pointerY, top, height) {
+  if (!(height > 0)) return 'after';
+  return pointerY < top + height / 2 ? 'before' : 'after';
+}
+
+// 靠近列表上下边缘时的自动滚动速度：越靠边越快，返回 0 表示不滚动。
+export function autoScrollDelta(pointerY, top, bottom, margin = 52, maxSpeed = 16) {
+  const height = bottom - top;
+  if (!(height > 0) || margin <= 0 || maxSpeed <= 0) return 0;
+  const edge = Math.min(margin, height / 2);
+  if (pointerY < top + edge) {
+    const ratio = Math.min(1, (top + edge - pointerY) / edge);
+    return -Math.ceil(ratio * maxSpeed);
+  }
+  if (pointerY > bottom - edge) {
+    const ratio = Math.min(1, (pointerY - (bottom - edge)) / edge);
+    return Math.ceil(ratio * maxSpeed);
+  }
+  return 0;
 }

@@ -6,6 +6,11 @@ import { fetchJson, isAbortError } from './net.js';
 
 const tpl = document.getElementById('tileTpl');
 
+// 鼠标进入、移动或点击后显示工具栏，停止操作 2 秒再同时隐藏上下两条。
+// 每个窗口独立计时，按住指针或键盘操作控件期间会不断续期，因此不会中途消失。
+const CONTROLS_HIDE_DELAY = 2_000;
+const CONTROLS_ACTIVITY_EVENTS = ['pointermove', 'pointerdown', 'click', 'wheel'];
+
 export class Tile {
   // state: { rid, title, nickname, avatar, rate, volume, muted, danmaku, opacity, expanded }
   constructor(state, {
@@ -48,6 +53,11 @@ export class Tile {
     this.visible = true;
     this.availableRates = [];
     this.ecoSuspended = false;
+    this.controlsTimer = 0;
+    this.controlsVisible = false;
+    this.pointerPressed = false;
+    this.keyboardMode = false;
+    this.controlsAbort = null;
 
     this.el = tpl.content.firstElementChild.cloneNode(true);
     this.el.dataset.rid = this.s.rid;
@@ -89,6 +99,7 @@ export class Tile {
     });
 
     this.bindEvents();
+    this.bindControlsAutoHide();
     this.applyAudio();
     this.applyDanmaku();
     if (this.s.expanded) this.el.classList.add('expanded');
@@ -145,6 +156,74 @@ export class Tile {
       this.$.pip.setAttribute('aria-label', '进入画中画');
       this.onPiP(this, false);
     });
+  }
+
+  // —— 上下工具栏的显示与自动隐藏 ——
+  // 只有真实操作（移动、点击、滚轮、输入、按键）才会续期；悬停或焦点本身不算，
+  // 否则点击后焦点留在按钮上会让工具栏永远不隐藏。
+  bindControlsAutoHide() {
+    this.controlsAbort = new AbortController();
+    const { signal } = this.controlsAbort;
+    for (const type of CONTROLS_ACTIVITY_EVENTS) {
+      this.el.addEventListener(type, () => this.showControls(), { passive: true, signal });
+    }
+    this.el.addEventListener('pointerdown', () => {
+      this.pointerPressed = true;
+      this.keyboardMode = false;
+      this.showControls();
+    }, { passive: true, signal });
+    this.el.addEventListener('pointerup', () => {
+      this.pointerPressed = false;
+      this.keepControlsVisible();
+    }, { signal });
+    // 按住指针拖动滑块时不会持续触发 pointermove，靠 pointerPressed 保持显示
+    this.el.addEventListener('input', () => this.keepControlsVisible(), { signal });
+    this.el.addEventListener('change', () => this.keepControlsVisible(), { signal });
+    this.el.addEventListener('keydown', () => {
+      this.keyboardMode = true;
+      this.showControls();
+    }, { signal });
+    this.el.addEventListener('focusout', () => this.scheduleControlsHide(), { signal });
+    // 指针在窗口外松开也要清掉按住状态，避免工具栏卡在显示状态
+    document.addEventListener('pointerup', () => {
+      if (!this.pointerPressed) return;
+      this.pointerPressed = false;
+      this.scheduleControlsHide();
+    }, { signal });
+  }
+
+  showControls() {
+    if (!this.controlsVisible) {
+      this.controlsVisible = true;
+      this.el.classList.add('controls-visible');
+    }
+    this.keepControlsVisible();
+  }
+
+  hideControls() {
+    clearTimeout(this.controlsTimer);
+    this.controlsTimer = 0;
+    if (!this.controlsVisible) return;
+    this.controlsVisible = false;
+    this.el.classList.remove('controls-visible');
+  }
+
+  // 每次操作都重新计时；按住指针或键盘操作控件期间继续续期。
+  keepControlsVisible() {
+    clearTimeout(this.controlsTimer);
+    this.controlsTimer = setTimeout(() => {
+      this.controlsTimer = 0;
+      if (this.pointerPressed || (this.keyboardMode && this.el.contains(document.activeElement))) {
+        this.keepControlsVisible();
+        return;
+      }
+      this.hideControls();
+    }, CONTROLS_HIDE_DELAY);
+  }
+
+  scheduleControlsHide() {
+    if (!this.controlsVisible) return;
+    this.keepControlsVisible();
   }
 
   // —— 数据加载 ——
@@ -498,6 +577,10 @@ export class Tile {
     this.destroyed = true;
     this.loadSeq++;
     this.loadController?.abort();
+    clearTimeout(this.controlsTimer);
+    this.controlsTimer = 0;
+    this.controlsAbort?.abort();
+    this.controlsAbort = null;
     this.visibilityObserver?.disconnect();
     if (this.isPictureInPicture()) document.exitPictureInPicture?.().catch(() => {});
     this.player.destroy();

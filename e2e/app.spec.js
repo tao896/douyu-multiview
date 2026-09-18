@@ -85,6 +85,34 @@ async function hoverEdgeReveal(page, locator, edge) {
   await expect(locator).toHaveCSS('opacity', '1');
 }
 
+// 窗口工具栏默认隐藏，操作前先把鼠标移进画面唤出上下工具栏
+async function revealTileControls(tile) {
+  await tile.locator('.stage').hover();
+  await expect(tile).toHaveClass(/controls-visible/);
+}
+
+// 用鼠标把侧栏某一行的拖动把手拖到另一行；返回是否真正发生了位移
+async function dragRoomRow(page, fromRow, toRow, { position = 'after' } = {}) {
+  const handle = fromRow.locator('[data-side-drag]');
+  const fromBox = await handle.boundingBox();
+  const toBox = await toRow.boundingBox();
+  expect(fromBox).not.toBeNull();
+  expect(toBox).not.toBeNull();
+  const targetY = position === 'before'
+    ? toBox.y + 4
+    : toBox.y + toBox.height - 4;
+  await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2);
+  await page.mouse.down();
+  // 分几步移动，超过拖动阈值后再落点，模拟真实拖动
+  await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2 + 12, { steps: 3 });
+  await page.mouse.move(toBox.x + toBox.width / 2, targetY, { steps: 8 });
+  await page.mouse.up();
+}
+
+async function roomRids(page) {
+  return page.locator('#roomList .room-row').evaluateAll((rows) => rows.map((row) => row.dataset.rid));
+}
+
 test('opens one stream, exposes focus/diagnostics, notification and backup controls', async ({ page }) => {
   const counts = await mockApplication(page);
   await page.goto('/');
@@ -96,9 +124,12 @@ test('opens one stream, exposes focus/diagnostics, notification and backup contr
   expect(counts.resolve).toBe(2); // infoOnly + 带初始流地址的 resolve
   expect(counts.stream).toBe(0); // 首播不能紧接着重复调用 /api/stream
 
-  await page.getByRole('button', { name: '设为焦点画面' }).click();
+  const tile = page.locator('article.tile');
+  await revealTileControls(tile);
+  await tile.getByRole('button', { name: '设为焦点画面' }).click();
   await expect(page.getByRole('button', { name: '网格布局' })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: '取消焦点画面' }).click();
+  await revealTileControls(tile);
+  await tile.getByRole('button', { name: '取消焦点画面' }).click();
   await expect(page.getByRole('button', { name: '焦点布局' })).toHaveAttribute('aria-pressed', 'false');
 
   await page.getByRole('button', { name: /^状态 / }).click();
@@ -124,7 +155,7 @@ test('sound-enabled tile has a green border and only title text is linked', asyn
   const tile = page.locator('article.tile');
   const title = page.getByRole('link', { name: /测试直播间 100/ });
   await expect(tile).not.toHaveClass(/audio-active/);
-  await tile.hover();
+  await revealTileControls(tile);
   await expect.poll(async () => title.evaluate((link) => {
     const meta = link.parentElement;
     return link.getBoundingClientRect().width < meta.getBoundingClientRect().width;
@@ -192,7 +223,7 @@ test('batch room management, solo audio, shortcuts and workspace cloning remain 
   await page.getByRole('button', { name: '完成' }).click();
 
   const secondTile = page.locator('article.tile').nth(1);
-  await secondTile.hover();
+  await revealTileControls(secondTile);
   await secondTile.getByRole('button', { name: '独听', exact: true }).click();
   await expect(page.getByText('正在独听：')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -226,9 +257,9 @@ test('focus close exits focus mode, danmaku speed persists and sidebar can be fu
   await page.getByRole('button', { name: '完成' }).click();
 
   const firstTile = page.locator('article.tile').first();
-  await firstTile.hover();
+  await revealTileControls(firstTile);
   await firstTile.getByRole('button', { name: '设为焦点画面' }).click();
-  await firstTile.hover();
+  await revealTileControls(firstTile);
   await firstTile.getByRole('button', { name: '关闭窗口' }).click();
   await expect(page.locator('#grid')).toHaveAttribute('data-layout', 'grid');
   await expect(page.locator('article.tile.focus-main')).toHaveCount(0);
@@ -267,7 +298,7 @@ test('focus layout uses a 2x2 hero with right and bottom slots, and toolbar can 
   await page.getByRole('button', { name: '完成' }).click();
 
   const tiles = page.locator('article.tile');
-  await tiles.first().hover();
+  await revealTileControls(tiles.first());
   await tiles.first().getByRole('button', { name: '设为焦点画面' }).click();
   await expect(page.locator('#grid')).toHaveAttribute('data-layout', 'focus');
 
@@ -304,4 +335,168 @@ test('focus layout uses a 2x2 hero with right and bottom slots, and toolbar can 
   await toolbarReveal.click();
   await expect(page.locator('body')).not.toHaveClass(/toolbar-hidden/);
   await expect(page.locator('#topToolbar')).toBeVisible();
+});
+
+test('drags sidebar rooms to reorder, syncs open tiles and persists after reload', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('301 302 303 304');
+  await page.getByRole('button', { name: '添加' }).click();
+  const rows = page.locator('#roomList .room-row');
+  await expect(rows).toHaveCount(4);
+  expect(await roomRids(page)).toEqual(['301', '302', '303', '304']);
+
+  // 打开全部窗口，验证侧栏排序会同步到画面顺序
+  await page.getByRole('button', { name: '批量' }).click();
+  await page.getByRole('button', { name: '选择已开播' }).click();
+  await page.getByRole('button', { name: '打开所选' }).click();
+  await page.getByRole('button', { name: '完成' }).click();
+  await expect(page.locator('article.tile')).toHaveCount(4);
+  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['301', '302', '303', '304']);
+
+  // 把首行拖到末行之后，拖动不应误触打开房间
+  await dragRoomRow(page, rows.first(), rows.last());
+  await expect.poll(() => roomRids(page)).toEqual(['302', '303', '304', '301']);
+  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['302', '303', '304', '301']);
+
+  // 把末行拖回最前
+  await dragRoomRow(page, page.locator('#roomList .room-row').last(), page.locator('#roomList .room-row').first(), { position: 'before' });
+  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303', '304']);
+
+  await page.reload();
+  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303', '304']);
+  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['301', '302', '303', '304']);
+});
+
+test('dropping a dragged room on a filtered list keeps hidden rooms in relative order', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('301 302 303 304');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect(page.locator('#roomList .room-row')).toHaveCount(4);
+
+  // 搜索只保留 301、303 两行，隐藏的 302、304 必须保持相对顺序
+  await page.getByRole('searchbox', { name: '搜索直播间' }).fill('30');
+  await page.getByRole('combobox', { name: '筛选直播间状态' }).selectOption('all');
+  await page.getByRole('searchbox', { name: '搜索直播间' }).fill('301');
+  await expect(page.locator('#roomList .room-row:visible')).toHaveCount(1);
+  await page.getByRole('searchbox', { name: '搜索直播间' }).fill('303');
+  await expect(page.locator('#roomList .room-row:visible')).toHaveCount(1);
+
+  // 让 301 与 303 同时可见：按房间号精确搜索不支持多值，改用全部筛选后拖到 303 之后
+  await page.getByRole('searchbox', { name: '搜索直播间' }).fill('');
+  await page.getByRole('combobox', { name: '筛选直播间状态' }).selectOption('all');
+  const rows = page.locator('#roomList .room-row');
+  await expect(rows).toHaveCount(4);
+
+  // 拖动 301 到 303 之后：302 被夹在中间，相对顺序仍为 302 在 304 之前
+  await dragRoomRow(page, rows.nth(0), rows.nth(2));
+  await expect.poll(() => roomRids(page)).toEqual(['302', '303', '301', '304']);
+  await page.reload();
+  await expect.poll(() => roomRids(page)).toEqual(['302', '303', '301', '304']);
+});
+
+test('keeps the notification bell on and highlighted across reload, workspace switch and player updates', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('401 402');
+  await page.getByRole('button', { name: '添加' }).click();
+
+  const notify401 = page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ });
+  await notify401.click();
+  const notifyOn = page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ });
+  await expect(notifyOn).toHaveAttribute('aria-pressed', 'true');
+  await expect(notifyOn).toHaveClass(/\bon\b/);
+  // 开启状态应有明显的高亮背景，而不是仅靠彩色图标
+  const bg = await notifyOn.evaluate((node) => getComputedStyle(node).backgroundColor);
+  expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+
+  // 触发播放器状态更新（静音/音量）不应覆盖提醒状态
+  const tile = page.locator('article.tile').first();
+  await revealTileControls(tile);
+  await tile.getByRole('button', { name: '静音 / 取消静音' }).click();
+  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveClass(/\bon\b/);
+
+  // 切换方案再切回来，提醒状态仍应保留
+  await page.getByRole('button', { name: '复制' }).click();
+  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
+  const select = page.getByRole('combobox', { name: '当前观看方案' });
+  const options = await select.locator('option').evaluateAll((nodes) => nodes.map((n) => n.value));
+  await select.selectOption(options[0]);
+  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
+
+  // 关闭后同样正确恢复
+  await page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ }).click();
+  await expect(page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  await expect(page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('tile toolbars hide after two idle seconds and reappear on activity, per window', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('501 502');
+  await page.getByRole('button', { name: '添加' }).click();
+  await page.getByRole('button', { name: '批量' }).click();
+  await page.getByRole('button', { name: '选择已开播' }).click();
+  await page.getByRole('button', { name: '打开所选' }).click();
+  await page.getByRole('button', { name: '完成' }).click();
+  const tiles = page.locator('article.tile');
+  await expect(tiles).toHaveCount(2);
+
+  const first = tiles.first();
+  const second = tiles.nth(1);
+  await expect(first).not.toHaveClass(/controls-visible/);
+
+  // 鼠标进入即显示
+  await first.locator('.stage').hover();
+  await expect(first).toHaveClass(/controls-visible/);
+  // 静止 2 秒后自动隐藏，且两个窗口互不影响
+  await expect(first).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+
+  // 移动重新显示，连续操作会重新计时
+  await first.locator('.stage').hover();
+  await expect(first).toHaveClass(/controls-visible/);
+  await page.mouse.move(0, 0);
+  await expect(first).toHaveClass(/controls-visible/);
+  await expect(first).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+
+  // 点击画面唤出工具栏，鼠标移开后仍会按 2 秒规则隐藏（不会一直显示）
+  const stageBox = await first.locator('.stage').boundingBox();
+  await page.mouse.click(stageBox.x + stageBox.width / 2, stageBox.y + stageBox.height / 2);
+  await expect(first).toHaveClass(/controls-visible/);
+  await page.mouse.move(stageBox.x + stageBox.width / 2, stageBox.y + stageBox.height / 2);
+  await expect(first).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+
+  // 第二个窗口保持独立
+  await second.locator('.stage').hover();
+  await expect(second).toHaveClass(/controls-visible/);
+  await expect(first).not.toHaveClass(/controls-visible/);
+});
+
+test('holding a tile control keeps its toolbar visible until released', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('601');
+  await page.getByRole('button', { name: '添加' }).click();
+  const tile = page.locator('article.tile').first();
+  await revealTileControls(tile);
+
+  const range = tile.locator('input[type="range"]').first();
+  // hover 会等待控件动画结束并稳定，避免拿到过渡途中的坐标
+  await range.hover();
+  await page.mouse.down();
+  // 按住不放超过 2 秒，工具栏应保持显示
+  await page.waitForTimeout(2_600);
+  await expect(tile).toHaveClass(/controls-visible/);
+  await page.mouse.up();
+  // 松开后重新计时并隐藏
+  await expect(tile).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
 });

@@ -418,6 +418,57 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   margin: 2px 8px;
 }
 
+/* 拖动排序：手柄常驻，悬停/聚焦时更明显；拖动过程中禁用文本选择 */
+.room-drag {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 48px;
+  padding: 0;
+  flex: 0 0 18px;
+  color: var(--dim);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  opacity: .5;
+  cursor: grab;
+  touch-action: none;
+  transition: opacity .15s ease, color .15s ease;
+}
+.room-row:hover .room-drag,
+.room-drag:focus-visible { color: var(--text); opacity: 1; outline: none; }
+.room-drag:active { cursor: grabbing; }
+.room-drag .room-icon { width: 14px; height: 14px; }
+.room-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.room-row.dragging { opacity: .5; }
+.room-row.dragging .room-shortcut { border-color: var(--line); }
+/* 拖动排序期间禁止选中文本，并保持抓取光标 */
+body.room-dragging { user-select: none; cursor: grabbing; }
+/* 拖动时用一条线显示插入位置 */
+.room-row.drop-before::before,
+.room-row.drop-after::after {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  z-index: 2;
+  height: 2px;
+  content: "";
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 0 6px rgba(255, 122, 26, .7);
+}
+.room-row.drop-before::before { top: -2px; }
+.room-row.drop-after::after { bottom: -2px; }
+
 .room-select {
   display: grid;
   place-items: center;
@@ -438,13 +489,15 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   flex: 1 1 auto;
   min-height: 54px;
   margin: 0;
-  padding: 7px 114px 7px 9px;
+  padding: 7px 84px 7px 9px;
   color: var(--text);
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
+  cursor: grab;
 }
+.room-shortcut:active { cursor: grabbing; }
 .room-shortcut:hover {
   background: var(--panel);
   border-color: var(--line);
@@ -458,7 +511,7 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
 .room-row.open .room-shortcut::after {
   position: absolute;
   top: 16px;
-  right: 108px;
+  right: 78px;
   width: 3px;
   height: 22px;
   content: "";
@@ -474,15 +527,21 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   z-index: 1;
   display: flex;
   gap: 2px;
-  opacity: .45;
   transform: translateY(-50%);
-  transition: opacity .15s ease;
 }
-.room-row:hover .room-row-actions,
-.room-row-actions:focus-within { opacity: 1; }
+/* 未开启的按钮平时淡一点，悬停/聚焦时恢复；已开启的提醒始终不透明，
+   避免鼠标移开后因整体透明度让高亮看不出来。 */
+.room-delete,
+.room-notify:not(.on) {
+  opacity: .5;
+  transition: opacity .15s ease, color .15s ease, background .15s ease, border-color .15s ease;
+}
+.room-row:hover .room-delete,
+.room-row:hover .room-notify:not(.on),
+.room-delete:focus-visible,
+.room-notify:focus-visible { opacity: 1; }
 
 .room-delete,
-.room-move,
 .room-notify {
   display: grid;
   place-items: center;
@@ -494,11 +553,25 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   background: rgba(36, 39, 49, .92);
   border: 1px solid transparent;
   border-radius: 7px;
-  transition: color .15s ease, background .15s ease;
 }
-.room-notify.on { color: var(--accent); border-color: rgba(255, 122, 26, .35); }
-.room-move:hover,
-.room-move:focus-visible,
+/* 开启提醒必须一眼可辨：彩色背景 + 边框 + 铃铛填充，且不随鼠标移开而变淡 */
+.room-notify.on {
+  opacity: 1;
+  color: #17120c;
+  background: var(--accent);
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px rgba(255, 122, 26, .35);
+}
+.room-notify.on .room-icon {
+  fill: currentColor;
+  stroke-width: 1.4;
+}
+.room-notify.on:hover,
+.room-notify.on:focus-visible {
+  color: #17120c;
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
 .room-notify:hover,
 .room-notify:focus-visible {
   color: var(--accent);
@@ -652,7 +725,7 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   padding: 5px 4px;
 }
 .sidebar-collapsed .room-delete,
-.sidebar-collapsed .room-move,
+.sidebar-collapsed .room-drag,
 .sidebar-collapsed .room-notify,
 .sidebar-collapsed .room-select,
 .sidebar-collapsed .batch-bar,
@@ -912,24 +985,18 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   transition: opacity .18s ease, transform .18s ease;
 }
 
-.tile:hover .tile-head,
-.tile:hover .tile-foot,
-.tile:focus-within .tile-head,
-.tile:focus-within .tile-foot {
+/* 工具栏由 JS 按「最后操作后 2 秒」的规则控制，不再依赖悬停或焦点常显。 */
+.tile.controls-visible .tile-head,
+.tile.controls-visible .tile-foot {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
 }
 
-/* 触屏设备没有可靠的 hover，始终保留控制入口。 */
+/* 触屏没有可靠的 hover，但仍沿用「点击显示、停止操作 2 秒隐藏」的规则：
+   只补上常驻边框，控制栏的显隐交给 JS。 */
 @media (hover: none) {
   .tile { border-color: var(--line); }
-  .tile-head,
-  .tile-foot {
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: auto;
-  }
 }
 
 input[type="range"] {
@@ -1211,11 +1278,11 @@ kbd {
     justify-content: initial;
     width: auto;
     min-height: 54px;
-    padding: 7px 114px 7px 9px;
+    padding: 7px 84px 7px 9px;
   }
   .sidebar-collapsed .room-row.batch-mode .room-shortcut { padding-right: 9px; }
   .sidebar-collapsed .room-delete,
-  .sidebar-collapsed .room-move,
+  .sidebar-collapsed .room-drag,
   .sidebar-collapsed .room-notify { display: grid; }
   .sidebar-collapsed .room-select { display: grid; }
   .sidebar-collapsed .room-select[hidden] { display: none; }
