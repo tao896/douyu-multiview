@@ -6,9 +6,9 @@ import { fetchJson, isAbortError } from './net.js';
 
 const tpl = document.getElementById('tileTpl');
 
-// 鼠标进入、移动或点击后显示工具栏，停止操作 2 秒再同时隐藏上下两条。
+// 鼠标进入、移动或点击后显示工具栏，停止操作 1 秒再同时隐藏上下两条。
 // 每个窗口独立计时，按住指针或键盘操作控件期间会不断续期，因此不会中途消失。
-const CONTROLS_HIDE_DELAY = 2_000;
+const CONTROLS_HIDE_DELAY = 1_000;
 const CONTROLS_ACTIVITY_EVENTS = ['pointermove', 'pointerdown', 'click', 'wheel'];
 
 export class Tile {

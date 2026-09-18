@@ -371,6 +371,34 @@ test('drags sidebar rooms to reorder, syncs open tiles and persists after reload
     .toEqual(['301', '302', '303', '304']);
 });
 
+test('a plain click on a sidebar room row opens it without starting a drag', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('701 702');
+  await page.getByRole('button', { name: '添加' }).click();
+  const rows = page.locator('#roomList .room-row');
+  await expect(rows).toHaveCount(2);
+  // 首个添加的房间会自动打开，第二行仍是关闭状态
+  await expect(page.locator('article.tile')).toHaveCount(1);
+  expect(await roomRids(page)).toEqual(['701', '702']);
+
+  // 点击行内的“打开”按钮：指针捕获曾把 click 重定向到拖动把手，导致无法打开
+  await page.getByRole('button', { name: /打开 测试直播间 702/ }).click();
+  await expect(page.locator('article.tile')).toHaveCount(2);
+  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['701', '702']);
+
+  // 单击不应改变顺序
+  expect(await roomRids(page)).toEqual(['701', '702']);
+
+  // 点击已打开的行应定位到对应窗口（active 状态保持）
+  await page.getByRole('button', { name: /定位 测试直播间 702/ }).click();
+  await expect(page.getByRole('button', { name: /定位 测试直播间 702/ })).toHaveClass(/active/);
+  // 单击拖动把手本身（未位移）也不应触发排序
+  await rows.nth(0).locator('[data-side-drag]').click();
+  expect(await roomRids(page)).toEqual(['701', '702']);
+});
+
 test('dropping a dragged room on a filtered list keeps hidden rooms in relative order', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');

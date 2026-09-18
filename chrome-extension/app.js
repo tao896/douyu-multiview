@@ -609,6 +609,7 @@ function endRoomDrag({ commit = true } = {}) {
   cancelAnimationFrame(roomDrag.raf);
   const { room, target, position } = roomDrag;
   roomDrag = null;
+  // 指针捕获由浏览器在 pointerup/pointercancel 时自动释放，无需手动 release
   document.body.classList.remove('room-dragging');
   roomEntries.get(room)?.el.classList.remove('dragging');
   clearRoomDropMarks();
@@ -620,11 +621,13 @@ function startRoomDrag(room, event) {
   if (event.button !== 0 && event.pointerType === 'mouse') return;
   const entry = roomEntries.get(room);
   if (!entry || entry.el.hidden) return;
-  // 阻止默认行为，避免拖动过程中选中文本或触发点击打开房间
-  event.preventDefault();
+  // 这里既不 preventDefault 也不捕获指针：否则浏览器会把随后的 click 重定向到
+  // 拖动把手上，行内“打开/定位”按钮永远收不到点击。只有指针真正移动超过阈值
+  // 才进入拖动状态（见 beginRoomDrag），单击仍然走各自的 click 处理。
   roomDrag = {
     room,
     pointerId: event.pointerId,
+    captureTarget: entry.drag,
     startX: event.clientX,
     startY: event.clientY,
     x: event.clientX,
@@ -634,19 +637,26 @@ function startRoomDrag(room, event) {
     raf: 0,
     moved: false,
   };
-  entry.drag.setPointerCapture?.(event.pointerId);
+}
+
+// 指针移动超过阈值后才算拖动：此时才阻止默认行为、捕获指针并显示拖动样式。
+function beginRoomDrag() {
+  if (!roomDrag) return;
+  const { room, pointerId, captureTarget } = roomDrag;
+  roomDrag.moved = true;
+  captureTarget?.setPointerCapture?.(pointerId);
   document.body.classList.add('room-dragging');
-  entry.el.classList.add('dragging');
+  roomEntries.get(room)?.el.classList.add('dragging');
+  roomDrag.raf = requestAnimationFrame(autoScrollTick);
 }
 
 function onRoomDragMove(event) {
   if (!roomDrag || event.pointerId !== roomDrag.pointerId) return;
-  event.preventDefault();
   if (!roomDrag.moved) {
     if (Math.hypot(event.clientX - roomDrag.startX, event.clientY - roomDrag.startY) < 4) return;
-    roomDrag.moved = true;
-    roomDrag.raf = requestAnimationFrame(autoScrollTick);
+    beginRoomDrag();
   }
+  event.preventDefault();
   updateRoomDrag(event.clientY);
 }
 
