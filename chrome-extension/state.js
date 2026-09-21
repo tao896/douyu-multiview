@@ -18,6 +18,7 @@ export const ROOM_STATE_KEYS = [
   'expanded',
   'notifyOnLive',
 ];
+export const DEFAULT_DANMAKU_CONFIG = { keywords: [], enabled: true, dedupe: true, windowMs: 3000 };
 
 const VALID_COLS = new Set(['auto', '1', '2', '3', '4', '5']);
 const VALID_DANMAKU_SPEEDS = new Set([0.5, 0.75, 1, 1.25, 1.5, 2]);
@@ -86,7 +87,14 @@ export function normalizeWorkspace(raw = {}, index = 0) {
     ecoMode: !!raw.ecoMode,
     rooms,
     openRids,
+    danmaku: normalizeDanmakuConfig(raw.danmaku),
+    layoutPreset: ['auto', 'free', 'hero', 'dual'].includes(raw.layoutPreset) ? raw.layoutPreset : 'auto',
+    layoutRatios: Array.isArray(raw.layoutRatios) ? raw.layoutRatios.map(Number).filter((x) => Number.isFinite(x) && x > 0).slice(0, 8) : [],
   };
+}
+
+export function normalizeDanmakuConfig(raw = {}) {
+  return { ...DEFAULT_DANMAKU_CONFIG, ...raw, keywords: [...new Set((raw.keywords || []).map((x) => String(x).trim()).filter(Boolean))], windowMs: Math.max(0, Math.min(60000, Number(raw.windowMs) || DEFAULT_DANMAKU_CONFIG.windowMs)), enabled: raw.enabled !== false, dedupe: raw.dedupe !== false };
 }
 
 export function createWorkspace(name = '默认方案', overrides = {}) {

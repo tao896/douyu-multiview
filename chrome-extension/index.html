@@ -137,6 +137,7 @@
         <option value="5">5 列</option>
       </select>
     </label>
+    <label class="field"><span>预设</span><select id="layoutPresetSelect" aria-label="布局预设"><option value="auto">自适应</option><option value="free">自由比例</option><option value="hero">一大多小</option><option value="dual">双主画面</option></select></label>
     <button class="ghost toolbar-icon-btn" id="layoutModeBtn" type="button" aria-pressed="false"
             aria-label="焦点布局" data-tooltip="切换到焦点布局">
       <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-grid"/></svg>
@@ -175,6 +176,7 @@
       <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-danmaku-off"/></svg>
       <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-danmaku"/></svg>
     </button>
+    <button class="ghost toolbar-icon-btn" id="danmakuSettingsBtn" type="button" aria-label="弹幕规则" data-tooltip="弹幕屏蔽与去重">⚙</button>
     <button class="ghost toolbar-icon-btn" id="reloadAllBtn" type="button"
             aria-label="刷新" data-tooltip="重载全部直播窗口">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-reload"/></svg>
@@ -460,6 +462,16 @@
     <div class="modal-actions">
       <button class="primary" value="confirm">关闭</button>
     </div>
+  </form>
+</dialog>
+<dialog class="modal" id="danmakuSettingsDialog" aria-labelledby="danmakuSettingsTitle">
+  <form method="dialog" id="danmakuSettingsForm">
+    <h2 id="danmakuSettingsTitle">弹幕屏蔽与去重</h2>
+    <label class="choice"><input type="checkbox" id="danmakuFilterEnabled"> 启用关键词屏蔽</label>
+    <label class="modal-field">屏蔽关键词（逗号或换行分隔）<textarea id="danmakuKeywords" rows="4"></textarea></label>
+    <label class="choice"><input type="checkbox" id="danmakuDedupeEnabled"> 合并短时间重复弹幕</label>
+    <label class="modal-field">重复时间窗口（毫秒）<input id="danmakuDedupeWindow" type="number" min="0" max="60000" step="100"></label>
+    <div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" id="danmakuSettingsSave" value="default">保存</button></div>
   </form>
 </dialog>
 

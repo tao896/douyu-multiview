@@ -2,6 +2,7 @@
 import { Player } from './player.js';
 import { DanmakuClient } from './danmaku-client.js';
 import { DanmakuRenderer } from './danmaku-render.js';
+import { DanmakuFilter } from './danmaku-filter.js';
 import { fetchJson, isAbortError } from './net.js';
 
 const tpl = document.getElementById('tileTpl');
@@ -24,6 +25,7 @@ export class Tile {
     onData,
     onRates,
     onPiP,
+    danmakuConfig,
   }) {
     this.s = {
       rate: 0,
@@ -93,6 +95,7 @@ export class Tile {
     this.$.pip.hidden = !(document.pictureInPictureEnabled && this.$.video.requestPictureInPicture);
 
     this.renderer = new DanmakuRenderer(this.$.canvas);
+    this.danmakuFilter = new DanmakuFilter(danmakuConfig);
     this.player = new Player(this.$.video, {
       getUrl: ({ signal } = {}) => this.fetchUrl({ signal }),
       onState: (e) => this.onPlayerState(e),
@@ -351,7 +354,7 @@ export class Tile {
   connectDanmaku() {
     if (this.dm) return;
     this.dm = new DanmakuClient(this.s.rid, {
-      onChat: (c) => this.renderer.push(c.text, c.color),
+      onChat: (c) => { if (this.danmakuFilter.accept(c.text)) this.renderer.push(c.text, c.color); },
       onStatus: (e) => {
         if (e.type !== 'live') return;
         const changed = this.setRoomLive(e.live);

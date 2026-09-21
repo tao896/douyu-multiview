@@ -4,7 +4,7 @@
   "short_name": "斗鱼同屏",
   "version": "1.0.1",
   "description": "同屏观看多个斗鱼直播间，独立控制音量、弹幕、清晰度和布局。",
-  "permissions": ["notifications"],
+  "permissions": ["notifications", "storage", "alarms"],
   "host_permissions": [
     "https://douyu.com/*",
     "https://*.douyu.com/*",

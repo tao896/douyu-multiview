@@ -130,6 +130,8 @@ function snapshotActiveWorkspace() {
   current.toolbarHidden = document.body.classList.contains('toolbar-hidden');
   current.hideOfflineWindows = hideOfflineWindows;
   current.layoutMode = grid.dataset.layout === 'focus' ? 'focus' : 'grid';
+  current.layoutPreset = grid.dataset.preset || current.layoutPreset || 'auto';
+  current.layoutRatios = (grid.dataset.ratios || '').split(',').map(Number).filter((x) => Number.isFinite(x) && x > 0);
   current.focusedRid = current.layoutMode === 'focus' ? preferredFocusRid : '';
   current.danmakuSpeed = Number($('danmakuSpeedSelect').value) || 1;
   current.ecoMode = $('ecoModeBtn').classList.contains('on');
@@ -381,12 +383,20 @@ async function toggleRoomNotification(room) {
   syncSidebarRoom(room);
   save({ immediate: true });
   toast(room.s.notifyOnLive ? '已开启开播提醒' : '已关闭开播提醒');
+  syncExtensionReminders();
   const isExtension = !!globalThis.chrome?.runtime?.id;
   if (!isExtension && room.s.notifyOnLive && globalThis.Notification?.permission === 'default') {
     try {
       await Notification.requestPermission();
     } catch {}
   }
+}
+
+function syncExtensionReminders() {
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.id) return;
+  const roomsToWatch = Object.fromEntries(rooms.filter((room) => room.s.notifyOnLive).map((room) => [String(room.s.rid), { title: room.s.title || room.s.nickname || `房间 ${room.s.rid}`, avatar: room.s.avatar || '', live: room.live === true }]));
+  try { Promise.resolve(runtime.sendMessage({ type: 'douyu-sync-reminders', rooms: roomsToWatch })).catch(() => {}); } catch {}
 }
 
 function updateRoomFromInfo(room, info, { previousLive = room.live } = {}) {
@@ -749,6 +759,7 @@ function openRoom(room, { persist = true } = {}) {
     onData: () => roomDataDialog.open(tile.s),
     onRates: () => syncBatchRates(),
     onPiP: (item) => scheduleEco(item),
+    danmakuConfig: activeWorkspace().danmaku,
   });
   tiles.push(tile);
   tileRooms.set(tile, room);
@@ -917,6 +928,10 @@ function clearRuntime() {
 function loadWorkspaceRuntime(current) {
   grid.dataset.cols = current.cols;
   grid.dataset.layout = current.layoutMode || 'grid';
+  grid.dataset.preset = current.layoutPreset || 'auto';
+  grid.dataset.ratios = (current.layoutRatios || []).join(',');
+  $('layoutPresetSelect').value = grid.dataset.preset;
+  grid.style.setProperty('--layout-ratios', (current.layoutRatios || []).map((x) => `${x}fr`).join(' '));
   preferredFocusRid = current.focusedRid || '';
   setHideOfflineWindows(current.hideOfflineWindows, { persist: false });
   $('colsSelect').value = current.cols;
@@ -1212,6 +1227,7 @@ function applyLayout(preferredRid = preferredFocusRid) {
     ? visible.find((tile) => String(tile.s.rid) === preferredFocusRid) || visible[0]
     : null;
   tiles.forEach((tile) => tile.setFocused(tile === focused));
+  installLayoutDivider();
   $('layoutModeBtn').classList.toggle('on', focusMode);
   $('layoutModeBtn').setAttribute('aria-pressed', String(focusMode));
   setToolbarButtonLabel(
@@ -1219,6 +1235,23 @@ function applyLayout(preferredRid = preferredFocusRid) {
     focusMode ? '网格布局' : '焦点布局',
     focusMode ? '切换到网格布局' : '切换到焦点布局'
   );
+}
+
+function installLayoutDivider() {
+  grid.querySelector('.layout-divider')?.remove();
+  if (grid.dataset.preset !== 'free' || tiles.filter((t) => !t.el.hidden).length < 2 || matchMedia(MOBILE_QUERY).matches) return;
+  const divider = document.createElement('div'); divider.className = 'layout-divider'; divider.title = '拖动调整布局比例';
+  const initial = Number((grid.dataset.ratios || '1,1').split(',')[0]) || 1;
+  divider.style.left = `${(initial / (initial + 1)) * 100}%`;
+  grid.appendChild(divider);
+  let dragging = false;
+  divider.addEventListener('pointerdown', (e) => { dragging = true; divider.setPointerCapture(e.pointerId); e.preventDefault(); });
+  divider.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const rect = grid.getBoundingClientRect(); const ratio = Math.max(.25, Math.min(4, (e.clientX - rect.left) / Math.max(1, rect.width - (e.clientX - rect.left))));
+    grid.dataset.ratios = `${ratio},1`; grid.style.setProperty('--layout-ratios', `${ratio}fr 1fr`); divider.style.left = `${(ratio / (ratio + 1)) * 100}%`; snapshotActiveWorkspace(); save();
+  });
+  divider.addEventListener('pointerup', () => { dragging = false; save({ immediate: true }); });
 }
 
 function setFocusedTile(tile) {
@@ -1555,6 +1588,12 @@ $('colsSelect').addEventListener('change', (event) => {
   grid.dataset.cols = event.target.value;
   save();
 });
+$('layoutPresetSelect').addEventListener('change', (event) => {
+  grid.dataset.preset = event.target.value;
+  if (event.target.value === 'free' && !grid.dataset.ratios) grid.dataset.ratios = '1fr,1fr';
+  grid.style.setProperty('--layout-ratios', (grid.dataset.ratios || '').split(',').map((x) => `${Number(x) || 1}fr`).join(' '));
+  save({ immediate: true });
+});
 $('danmakuSpeedSelect').addEventListener('change', (event) => {
   const speed = Number(event.target.value) || 1;
   tiles.forEach((tile) => tile.setDanmakuSpeed(speed));
@@ -1624,10 +1663,37 @@ document.addEventListener('keydown', (event) => {
 
 $('helpBtn').addEventListener('click', () => $('helpDialog').showModal());
 
+function openDanmakuSettings() {
+  const cfg = activeWorkspace().danmaku || { keywords: [], enabled: true, dedupe: true, windowMs: 3000 };
+  $('danmakuFilterEnabled').checked = cfg.enabled !== false;
+  $('danmakuDedupeEnabled').checked = cfg.dedupe !== false;
+  $('danmakuKeywords').value = (cfg.keywords || []).join('\n');
+  $('danmakuDedupeWindow').value = cfg.windowMs ?? 3000;
+  $('danmakuSettingsDialog').showModal();
+}
+$('danmakuSettingsBtn').addEventListener('click', openDanmakuSettings);
+$('danmakuSettingsForm').addEventListener('submit', (event) => {
+  if (event.submitter?.value === 'cancel') return;
+  const cfg = activeWorkspace().danmaku = {
+    enabled: $('danmakuFilterEnabled').checked,
+    dedupe: $('danmakuDedupeEnabled').checked,
+    keywords: $('danmakuKeywords').value.split(/[\n,，]+/).map((x) => x.trim()).filter(Boolean),
+    windowMs: Math.max(0, Math.min(60000, Number($('danmakuDedupeWindow').value) || 0)),
+  };
+  tiles.forEach((tile) => tile.danmakuFilter?.configure(cfg));
+  save({ immediate: true });
+});
+
 // —— 启动与恢复 ——
 renderWorkspaceSelect();
 savingBlocked = true;
 loadWorkspaceRuntime(activeWorkspace());
+syncExtensionReminders();
+const requestedRoom = new URLSearchParams(location.search).get('room');
+if (requestedRoom) {
+  const requested = findRoom(requestedRoom);
+  if (requested) openRoom(requested);
+}
 savingBlocked = false;
 setMobileSidebar(false);
 syncEmpty();

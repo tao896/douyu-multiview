@@ -3,7 +3,6 @@
 const STALL_MS = 15_000;
 const MAX_RETRY = 6;
 
-const configuredLoggers = new WeakSet();
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
 const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap detected\b/;
@@ -18,7 +17,7 @@ function filterRoutineAudioConsole(consoleRef = globalThis.console) {
     const original = consoleRef[method];
     if (typeof original !== 'function' || filteredConsoleMethods.has(original)) continue;
     const filtered = function (...args) {
-      const message = args.length === 1 ? String(args[0]) : '';
+      const message = args.map((arg) => String(arg)).join(' ');
       // mpegts.js has already corrected these timestamp discontinuities by
       // dropping an overlapping frame or inserting silent frames.
       if (isRoutineAudioWarning(message)) return;
@@ -33,17 +32,6 @@ function filterRoutineAudioConsole(consoleRef = globalThis.console) {
 
 function configureLogging(mpegts) {
   filterRoutineAudioConsole();
-  const logging = mpegts.LoggingControl;
-  if (!logging?.addLogListener || configuredLoggers.has(logging)) return;
-  // 直播源的 AAC 时间戳异常由 remuxer 自动纠正，不是播放失败。
-  // 使用库的日志接口仅过滤这一类逐帧警告，保留其他警告及错误。
-  logging.enableWarn = false;
-  logging.addLogListener((level, message) => {
-    if (level !== 'warn') return;
-    if (isRoutineAudioWarning(message)) return;
-    console.warn(message);
-  });
-  configuredLoggers.add(logging);
 }
 
 const CONFIG = {
