@@ -467,7 +467,7 @@ test('keeps the notification bell on and highlighted across reload, workspace sw
   await expect(page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'false');
 });
 
-test('tile toolbars hide after two idle seconds and reappear on activity, per window', async ({ page }) => {
+test('tile toolbars hide after one idle second or immediately on mouse leave, per window', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
   await page.getByRole('textbox', { name: '添加直播间' }).fill('501 502');
@@ -486,17 +486,17 @@ test('tile toolbars hide after two idle seconds and reappear on activity, per wi
   // 鼠标进入即显示
   await first.locator('.stage').hover();
   await expect(first).toHaveClass(/controls-visible/);
-  // 静止 2 秒后自动隐藏，且两个窗口互不影响
+  // 窗口内静止 1 秒后自动隐藏，且两个窗口互不影响
   await expect(first).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
 
   // 移动重新显示，连续操作会重新计时
   await first.locator('.stage').hover();
   await expect(first).toHaveClass(/controls-visible/);
   await page.mouse.move(0, 0);
-  await expect(first).toHaveClass(/controls-visible/);
-  await expect(first).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+  // 移出后立即移除显示状态，不等待原来的一秒计时器。
+  expect(await first.evaluate((el) => el.classList.contains('controls-visible'))).toBe(false);
 
-  // 点击画面唤出工具栏，鼠标移开后仍会按 2 秒规则隐藏（不会一直显示）
+  // 点击画面唤出工具栏，鼠标留在窗口内仍按 1 秒规则隐藏
   const stageBox = await first.locator('.stage').boundingBox();
   await page.mouse.click(stageBox.x + stageBox.width / 2, stageBox.y + stageBox.height / 2);
   await expect(first).toHaveClass(/controls-visible/);
