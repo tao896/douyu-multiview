@@ -126,8 +126,8 @@
   </div>
 
   <div class="tools">
-    <label class="field">
-      <span>布局</span>
+  <label class="field">
+    <span>布局</span>
       <select id="colsSelect" title="每行显示几个">
         <option value="auto">自适应</option>
         <option value="1">1 列</option>
@@ -136,8 +136,16 @@
         <option value="4">4 列</option>
         <option value="5">5 列</option>
       </select>
-    </label>
-    <label class="field"><span>预设</span><select id="layoutPresetSelect" aria-label="布局预设"><option value="auto">自适应</option><option value="free">自由比例</option><option value="hero">一大多小</option><option value="dual">双主画面</option></select></label>
+  </label>
+  <label class="field">
+    <span>预设</span>
+    <select id="layoutPresetSelect" aria-label="布局预设">
+      <option value="auto">自适应</option>
+      <option value="free">自由</option>
+      <option value="hero">主次</option>
+      <option value="dual">双列</option>
+    </select>
+  </label>
     <button class="ghost toolbar-icon-btn" id="layoutModeBtn" type="button" aria-pressed="false"
             aria-label="焦点布局" data-tooltip="切换到焦点布局">
       <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-grid"/></svg>

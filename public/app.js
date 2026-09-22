@@ -130,8 +130,8 @@ function snapshotActiveWorkspace() {
   current.toolbarHidden = document.body.classList.contains('toolbar-hidden');
   current.hideOfflineWindows = hideOfflineWindows;
   current.layoutMode = grid.dataset.layout === 'focus' ? 'focus' : 'grid';
-  current.layoutPreset = grid.dataset.preset || current.layoutPreset || 'auto';
-  current.layoutRatios = (grid.dataset.ratios || '').split(',').map(Number).filter((x) => Number.isFinite(x) && x > 0);
+  current.layoutPreset = $('layoutPresetSelect').value;
+  current.layoutRatios = (grid.dataset.ratios || '').split(',').map(Number).filter((value) => Number.isFinite(value) && value > 0);
   current.focusedRid = current.layoutMode === 'focus' ? preferredFocusRid : '';
   current.danmakuSpeed = Number($('danmakuSpeedSelect').value) || 1;
   current.ecoMode = $('ecoModeBtn').classList.contains('on');
@@ -928,13 +928,12 @@ function clearRuntime() {
 function loadWorkspaceRuntime(current) {
   grid.dataset.cols = current.cols;
   grid.dataset.layout = current.layoutMode || 'grid';
-  grid.dataset.preset = current.layoutPreset || 'auto';
-  grid.dataset.ratios = (current.layoutRatios || []).join(',');
-  $('layoutPresetSelect').value = grid.dataset.preset;
-  grid.style.setProperty('--layout-ratios', (current.layoutRatios || []).map((x) => `${x}fr`).join(' '));
   preferredFocusRid = current.focusedRid || '';
   setHideOfflineWindows(current.hideOfflineWindows, { persist: false });
   $('colsSelect').value = current.cols;
+  $('layoutPresetSelect').value = current.layoutPreset || 'auto';
+  grid.dataset.preset = current.layoutPreset || 'auto';
+  grid.dataset.ratios = (current.layoutRatios || []).join(',');
   $('danmakuSpeedSelect').value = String(current.danmakuSpeed || 1);
   $('ecoModeBtn').classList.toggle('on', !!current.ecoMode);
   $('ecoModeBtn').setAttribute('aria-pressed', String(!!current.ecoMode));
@@ -1227,7 +1226,6 @@ function applyLayout(preferredRid = preferredFocusRid) {
     ? visible.find((tile) => String(tile.s.rid) === preferredFocusRid) || visible[0]
     : null;
   tiles.forEach((tile) => tile.setFocused(tile === focused));
-  installLayoutDivider();
   $('layoutModeBtn').classList.toggle('on', focusMode);
   $('layoutModeBtn').setAttribute('aria-pressed', String(focusMode));
   setToolbarButtonLabel(
