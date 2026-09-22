@@ -7,20 +7,30 @@ const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
 const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap detected\b/;
 
-function isRoutineAudioWarning(message) {
-  return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message);
+const STARTUP_STALL_WARNING = /^\[StartupStallJumper\] > Playback seems stuck at \d+(?:\.\d+)?, seek to \d+(?:\.\d+)?$/;
+
+const STREAM_UPDATE_WARNINGS = new Set([
+  '[FLVDemuxer] > AVCDecoderConfigurationRecord has been changed, re-generate initialization segment',
+  '[FLVDemuxer] > Found another onMetaData tag!',
+]);
+
+// 识别播放器内部自行处理的时间戳、启动跳转和流信息更新提示。
+function isRoutinePlaybackWarning(message) {
+  return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
+    || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message);
 }
 
-function filterRoutineAudioConsole(consoleRef = globalThis.console) {
+// 仅过滤已知自愈提示，保留其他警告和错误。
+function filterRoutinePlaybackConsole(consoleRef = globalThis.console) {
   if (!consoleRef) return;
   for (const method of ['warn', 'error', 'log']) {
     const original = consoleRef[method];
     if (typeof original !== 'function' || filteredConsoleMethods.has(original)) continue;
+    // 保留非目标日志的原始参数与调用上下文。
     const filtered = function (...args) {
       const message = args.map((arg) => String(arg)).join(' ');
-      // mpegts.js has already corrected these timestamp discontinuities by
-      // dropping an overlapping frame or inserting silent frames.
-      if (isRoutineAudioWarning(message)) return;
+      // 库会自行修正时间戳、跳转缓冲起点或更新流信息；过滤不影响处理逻辑。
+      if (isRoutinePlaybackWarning(message)) return;
       return original.apply(this, args);
     };
     try {
@@ -30,8 +40,9 @@ function filterRoutineAudioConsole(consoleRef = globalThis.console) {
   }
 }
 
+// 安装日志过滤器，多播放器重复初始化时不会重复包装。
 function configureLogging(mpegts) {
-  filterRoutineAudioConsole();
+  filterRoutinePlaybackConsole();
 }
 
 const CONFIG = {
