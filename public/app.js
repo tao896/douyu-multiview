@@ -704,14 +704,6 @@ function syncOpenTilesToRoomOrder() {
   tiles.forEach((tile) => tile.resume());
 }
 
-function syncRoomOrderFromTiles() {
-  const openOwners = tiles.map((tile) => tileRooms.get(tile));
-  let cursor = 0;
-  const reordered = rooms.map((room) => (getOpenTile(room) ? openOwners[cursor++] : room));
-  rooms.splice(0, rooms.length, ...reordered);
-  syncRoomListOrder();
-}
-
 function copyTileSettingsToRoom(tile, room) {
   // 提醒由侧栏管理；播放器持有创建时的副本，不能反向覆盖新的开关值。
   const next = normalizeRoomState({ ...tile.s, notifyOnLive: room.s.notifyOnLive });
@@ -1521,7 +1513,6 @@ function makeDraggable(tile) {
     grid.querySelectorAll('.drop-target').forEach((node) => node.classList.remove('drop-target'));
     const order = [...grid.children].map((node) => node.dataset.rid);
     tiles.sort((a, b) => order.indexOf(String(a.s.rid)) - order.indexOf(String(b.s.rid)));
-    syncRoomOrderFromTiles();
     tiles.forEach((item) => item.resume());
     save();
   });

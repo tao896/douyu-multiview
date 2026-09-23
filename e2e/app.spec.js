@@ -371,6 +371,49 @@ test('drags sidebar rooms to reorder, syncs open tiles and persists after reload
     .toEqual(['301', '302', '303', '304']);
 });
 
+// 窗口排序只应更新 openRids，不能改变左侧 rooms 顺序。
+test('drags open windows without changing sidebar room order', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('301 302 303');
+  await page.getByRole('button', { name: '添加' }).click();
+  await page.getByRole('button', { name: '批量' }).click();
+  await page.getByRole('button', { name: '选择已开播' }).click();
+  await page.getByRole('button', { name: '打开所选' }).click();
+  await page.getByRole('button', { name: '完成' }).click();
+
+  const tiles = page.locator('article.tile');
+  // 显示标题栏后，通过真实鼠标拖动调整窗口顺序。
+  await expect(tiles).toHaveCount(3);
+  await revealTileControls(tiles.first());
+  const source = tiles.nth(0).locator('[data-drag-handle]');
+  const target = tiles.nth(2);
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  await page.mouse.move(sourceBox.x + 20, sourceBox.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width - 10, targetBox.y + targetBox.height / 2, { steps: 10 });
+  await page.mouse.move(targetBox.x + targetBox.width - 12, targetBox.y + targetBox.height / 2);
+  await page.mouse.up();
+
+  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
+  await expect.poll(() => tiles.evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['302', '303', '301']);
+  await page.reload();
+  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
+  await expect.poll(() => page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['302', '303', '301']);
+  // 复制并切回原方案，验证独立顺序的方案恢复路径。
+  const select = page.getByRole('combobox', { name: '当前观看方案' });
+  const original = await select.inputValue();
+  await page.getByRole('button', { name: '复制' }).click();
+  await expect(select).not.toHaveValue(original);
+  await select.selectOption(original);
+  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
+  await expect.poll(() => tiles.evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['302', '303', '301']);
+});
+
 test('a plain click on a sidebar room row opens it without starting a drag', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
