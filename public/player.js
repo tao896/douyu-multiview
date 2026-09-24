@@ -112,6 +112,9 @@ export class Player {
     if (this.destroyed) return;
     const generation = ++this.generation;
     this.loading = true;
+    const recovering = this.generation > 1;
+    const wasMuted = this.video.muted;
+    const wasVolume = this.video.volume;
     this.teardown();
     const controller = new AbortController();
     this.loadController = controller;
@@ -128,6 +131,9 @@ export class Player {
       const mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, CONFIG);
       this.mp = mp;
       mp.attachMediaElement(this.video);
+      this.video.muted = wasMuted;
+      this.video.volume = wasVolume;
+      this.video.playbackRate = 1;
 
       mp.on(mpegts.Events.ERROR, (type, detail) => {
         if (this.mp !== mp) return;
@@ -136,7 +142,11 @@ export class Player {
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
         if (this.mp !== mp) return;
+        // 重连会复用同一个 video 元素；从新流的缓冲尾部重新建立音视频共同时间基准。
+        if (recovering) this.alignRecoveredMedia();
         this.retry = 0;
+        this.lastTime = this.video.currentTime;
+        this.lastMove = Date.now();
         this.emit('playing');
       });
 
@@ -159,6 +169,17 @@ export class Player {
       if (this.loadController === controller) this.loadController = null;
       if (generation === this.generation) this.loading = false;
     }
+  }
+
+  alignRecoveredMedia() {
+    const v = this.video;
+    try {
+      if (v.buffered?.length) {
+        const end = v.buffered.end(v.buffered.length - 1);
+        const target = Math.max(0, end - CONFIG.liveBufferLatencyMinRemain);
+        if (Number.isFinite(target) && Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
+      }
+    } catch {}
   }
 
   // 画面是否确实在正常播放。用于把 mpegts 的非致命 ERROR 和真故障区分开。
@@ -325,6 +346,12 @@ export class Player {
     this.retryTimer = 0;
     this.loadController?.abort();
     this.loadController = null;
+    try {
+      this.video.playbackRate = 1;
+      this.video.pause();
+      this.video.removeAttribute('src');
+      this.video.load();
+    } catch {}
     if (this.mp) {
       try {
         this.mp.pause();
