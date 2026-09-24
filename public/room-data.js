@@ -11,6 +11,9 @@ export class RoomDataDialog {
     this.url = '';
     dialog.querySelector('[data-data-close]').addEventListener('click', () => this.close());
     dialog.querySelector('[data-data-refresh]').addEventListener('click', () => this.load());
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) this.close();
+    });
     dialog.addEventListener('close', () => this.clear());
   }
 

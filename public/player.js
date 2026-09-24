@@ -2,12 +2,16 @@
 // 流地址带 wsAuth token 会过期，出错或长时间不推进就重新签名换地址
 const STALL_MS = 15_000;
 const MAX_RETRY = 6;
+const STALE_LATENCY_SECONDS = 8;
+const STALE_LATENCY_SAMPLES = 2;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
 const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap detected\b/;
 
 const STARTUP_STALL_WARNING = /^\[StartupStallJumper\] > Playback seems stuck at \d+(?:\.\d+)?, seek to \d+(?:\.\d+)?$/;
+const EARLY_EOF_WARNING = /(?:Fetch stream meet Early-EOF|UnrecoverableEarlyEof)/i;
+const UNCONSUMED_DATA_WARNING = /^\[IOController\] > \d+ bytes unconsumed data remain when flush buffer, dropped$/;
 
 const STREAM_UPDATE_WARNINGS = new Set([
   '[FLVDemuxer] > AVCDecoderConfigurationRecord has been changed, re-generate initialization segment',
@@ -17,7 +21,12 @@ const STREAM_UPDATE_WARNINGS = new Set([
 // 识别播放器内部自行处理的时间戳、启动跳转和流信息更新提示。
 function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
-    || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message);
+    || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
+    || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message);
+}
+
+function isEarlyEofError(type, detail) {
+  return EARLY_EOF_WARNING.test(`${type || ''} ${detail || ''}`);
 }
 
 // 仅过滤已知自愈提示，保留其他警告和错误。
@@ -77,9 +86,11 @@ export class Player {
     this.mp = null;
     this.retry = 0;
     this.retryTimer = 0;
+    this.retryForce = false;
     this.watchdog = 0;
     this.lastTime = 0;
     this.lastMove = 0;
+    this.staleLatencySamples = 0;
     this.destroyed = false;
     this.loading = false;
     this.generation = 0;
@@ -121,7 +132,7 @@ export class Player {
       mp.on(mpegts.Events.ERROR, (type, detail) => {
         if (this.mp !== mp) return;
         // 网络错误多半是 token 过期，重新取流即可
-        this.fail(`${type}${detail ? ': ' + detail : ''}`);
+        this.fail(`${type}${detail ? ': ' + detail : ''}`, { force: isEarlyEofError(type, detail) });
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
         if (this.mp !== mp) return;
@@ -179,6 +190,13 @@ export class Player {
       if (t > this.lastTime + 0.05) {
         this.lastTime = t;
         this.lastMove = Date.now();
+      }
+      const latency = this.liveLatency();
+      if (latency > STALE_LATENCY_SECONDS) this.staleLatencySamples++;
+      else this.staleLatencySamples = 0;
+      if (this.staleLatencySamples >= STALE_LATENCY_SAMPLES) {
+        this.staleLatencySamples = 0;
+        this.fail(`直播延迟过高（${latency.toFixed(1)}s）`, { force: true });
         return;
       }
       // UI 里没有暂停按钮，所以 paused 一定是意外（多为 DOM 移动导致），先尝试续播
@@ -190,7 +208,17 @@ export class Player {
     }, 3000);
   }
 
-  fail(reason) {
+  liveLatency() {
+    const buffered = this.video.buffered;
+    if (!buffered?.length) return 0;
+    try {
+      return Math.max(0, buffered.end(buffered.length - 1) - this.video.currentTime);
+    } catch {
+      return 0;
+    }
+  }
+
+  fail(reason, { force = false } = {}) {
     if (this.destroyed) return;
     if (!this.online) {
       this.waitingForOnline = true;
@@ -203,7 +231,7 @@ export class Player {
     // mpegts 会抛可自愈的非致命 ERROR（网络抖动等），此时画面仍在从缓冲区正常播放。
     // 这种情况不能弹遮罩、更不能 teardown——否则等于亲手把一路好流掐断。
     // 交给看门狗判定：真卡住了它会再调一次 fail()，那时 currentTime 不再推进。
-    if (this.isHealthy()) {
+    if (!force && this.isHealthy()) {
       this.startWatchdog();
       return;
     }
@@ -217,12 +245,15 @@ export class Player {
     const baseDelay = Math.min(1500 * 2 ** this.retry, 20_000);
     const delay = Math.round(baseDelay * (0.8 + this.random() * 0.4));
     this.retry++;
+    this.retryForce = force;
     this.emit('retrying', `${reason}，${Math.round(delay / 1000)}s 后重连`);
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
       this.retryTimer = 0;
       // 等待期间可能已经自己恢复了，别去 teardown 一个正在播的播放器
-      if (this.isHealthy()) {
+      const forceReload = this.retryForce;
+      this.retryForce = false;
+      if (!forceReload && this.isHealthy()) {
         this.retry = 0;
         this.emit('playing');
         this.startWatchdog();
@@ -234,6 +265,7 @@ export class Player {
 
   reload(options) {
     this.retry = 0;
+    this.retryForce = false;
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
     return this.load(options);
@@ -242,6 +274,7 @@ export class Player {
   stop() {
     this.generation++;
     this.retry = 0;
+    this.retryForce = false;
     this.loading = false;
     this.teardown();
   }

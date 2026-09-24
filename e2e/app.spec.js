@@ -7,16 +7,19 @@ window.mpegts = {
   createPlayer: () => {
     const handlers = {};
     let video;
-    return {
+    const player = {
       attachMediaElement(element) {
         video = element;
         try { Object.defineProperty(video, 'paused', { configurable: true, get: () => false }); } catch {}
       },
       on(name, handler) { handlers[name] = handler; },
+      emit(name, ...args) { handlers[name]?.(...args); },
       load() { setTimeout(() => handlers.media?.(), 0); },
       play() { return Promise.resolve(); },
       pause() {}, unload() {}, detachMediaElement() {}, destroy() {},
     };
+    (window.__mpegtsPlayers ||= []).push(player);
+    return player;
   },
 };`;
 
@@ -146,6 +149,33 @@ test('opens one stream, exposes focus/diagnostics, notification and backup contr
   expect(download.suggestedFilename()).toMatch(/^douyu-multiview-.*\.json$/);
 });
 
+test('reconnects after Early-EOF and closes today data by clicking the dialog backdrop', async ({ page }) => {
+  const counts = await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect(page.locator('article.tile')).toBeVisible();
+
+  await page.evaluate(() => window.__mpegtsPlayers[0].emit('error', 'NetworkError', 'UnrecoverableEarlyEof'));
+  await expect.poll(() => counts.stream, { timeout: 5_000 }).toBeGreaterThan(0);
+  const streamCount = counts.stream;
+  await page.locator('video').evaluate((video) => {
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      get: () => ({ length: 1, end: () => video.currentTime + 9 }),
+    });
+  });
+  await expect.poll(() => counts.stream, { timeout: 12_000 }).toBeGreaterThan(streamCount);
+
+  const tile = page.locator('article.tile');
+  await revealTileControls(tile);
+  await tile.getByRole('button', { name: '查看今日数据' }).click();
+  const dialog = page.getByRole('dialog', { name: /今日数据/ });
+  await expect(dialog).toBeVisible();
+  await dialog.evaluate((element) => element.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await expect(dialog).toBeHidden();
+});
+
 test('sound-enabled tile has a green border and only title text is linked', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
@@ -165,6 +195,7 @@ test('sound-enabled tile has a green border and only title text is linked', asyn
   await expect(tile).toHaveClass(/audio-active/);
   await expect(tile).toHaveCSS('border-color', 'rgb(43, 182, 115)');
 
+  await revealTileControls(tile);
   await tile.getByRole('button', { name: '静音 / 取消静音' }).click();
   await expect(tile).not.toHaveClass(/audio-active/);
 });
