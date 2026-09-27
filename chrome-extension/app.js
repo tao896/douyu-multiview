@@ -81,6 +81,7 @@ document.addEventListener('scroll', () => hideToolbarTooltip(), true);
 // rooms 是当前方案中持久化的房间；tiles 只是当前打开的播放窗口。
 const rooms = [];
 const tiles = [];
+let aggregateTile = null;
 const roomEntries = new Map();
 const tileRooms = new Map();
 let activeSidebarRoom = null;
@@ -468,7 +469,8 @@ function syncSidebarRoom(room) {
   const entry = roomEntries.get(room);
   if (!entry) return;
   const openTile = getOpenTile(room);
-  const title = room.s.title || room.s.nickname || `房间 ${room.s.rid}`;
+  // 左侧快捷入口以主播名作为主标题；昵称暂不可用时回退到直播间标题。
+  const title = room.s.nickname || room.s.title || `房间 ${room.s.rid}`;
   const stateText = room.live === true ? '已开播' : room.live === false ? '未开播' : '检测中';
   const stateClass = room.live === true ? 'live' : room.live === false ? 'offline' : 'checking';
   const action = openTile ? '定位' : '打开';
@@ -749,6 +751,8 @@ function openRoom(room, { persist = true } = {}) {
     onVisibility: (item) => scheduleEco(item),
     onFocus: (item) => setFocusedTile(item),
     onData: () => roomDataDialog.open(tile.s),
+    onDanmaku: (source, chat) => dispatchDanmaku(source, chat),
+    onAggregate: (item) => toggleAggregate(item),
     onRates: () => syncBatchRates(),
     onPiP: (item) => scheduleEco(item),
     danmakuConfig: activeWorkspace().danmaku,
@@ -770,12 +774,30 @@ function openRoom(room, { persist = true } = {}) {
   return tile;
 }
 
+function syncAggregateButtons() {
+  tiles.forEach((tile) => tile.setAggregate(tile === aggregateTile));
+}
+
+function toggleAggregate(tile) {
+  aggregateTile = aggregateTile === tile ? null : tile;
+  syncAggregateButtons();
+}
+
+function dispatchDanmaku(source, chat) {
+  if (!source.s.danmaku) return;
+  const target = aggregateTile || source;
+  const label = source.s.nickname || source.s.title || `房间 ${source.s.rid}`;
+  const text = aggregateTile && source !== target ? `[${label}] ${chat.text}` : chat.text;
+  target.pushDanmaku(text, chat.color);
+}
+
 function closeTile(tile, { persist = true, checkStatus = true } = {}) {
   const index = tiles.indexOf(tile);
   if (index < 0) return;
   const wasFocused = grid.dataset.layout === 'focus' &&
     (tile.el.classList.contains('focus-main') || String(tile.s.rid) === preferredFocusRid);
   const room = tileRooms.get(tile);
+  if (aggregateTile === tile) aggregateTile = null;
   if (tile === soloTile) exitSolo({ persist: false });
   if (room) copyTileSettingsToRoom(tile, room);
 
@@ -785,6 +807,7 @@ function closeTile(tile, { persist = true, checkStatus = true } = {}) {
   tileRooms.delete(tile);
   clearTimeout(tile.sidebarTargetTimer);
   tile.destroy();
+  syncAggregateButtons();
   soloSnapshot.delete(String(tile.s.rid));
   if (activeSidebarRoom === room) activeSidebarRoom = null;
   if (room) syncSidebarRoom(room);

@@ -376,9 +376,11 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--dim) var(--panel);
+  /* 保留滚动能力，但不显示滚动条，避免占用直播间列表宽度。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.room-list::-webkit-scrollbar { display: none; }
 
 .sidebar-tools {
   display: flex;
@@ -817,6 +819,10 @@ body.room-dragging { user-select: none; cursor: grabbing; }
 .tile.audio-active {
   border-color: var(--live);
   box-shadow: 0 0 0 2px rgba(43, 182, 115, .22), 0 8px 24px rgba(0, 0, 0, .32);
+}
+.tile.aggregate-active {
+  border-color: rgba(255, 122, 26, .75);
+  box-shadow: 0 0 0 2px rgba(255, 122, 26, .16), 0 8px 24px rgba(0, 0, 0, .32);
 }
 
 @keyframes sidebar-target {

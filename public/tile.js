@@ -23,8 +23,10 @@ export class Tile {
     onVisibility,
     onFocus,
     onData,
+    onDanmaku,
     onRates,
     onPiP,
+    onAggregate,
     danmakuConfig,
   }) {
     this.s = {
@@ -46,8 +48,10 @@ export class Tile {
     this.onVisibility = onVisibility || (() => {});
     this.onFocus = onFocus || (() => {});
     this.onData = onData || (() => {});
+    this.onDanmaku = onDanmaku || (() => {});
     this.onRates = onRates || (() => {});
     this.onPiP = onPiP || (() => {});
+    this.onAggregate = onAggregate || (() => {});
     this.live = null;
     this.destroyed = false;
     this.loadSeq = 0;
@@ -86,6 +90,7 @@ export class Tile {
       solo: q('[data-act="solo"]'),
       focus: q('[data-act="focus"]'),
       pip: q('[data-act="pip"]'),
+      aggregate: q('[data-act="aggregate"]'),
     };
     this.updateTitleLink(this.s.title || '加载中…');
     this.$.nickname.textContent = this.s.nickname || '';
@@ -133,6 +138,7 @@ export class Tile {
         mute: () => this.setMuted(!this.s.muted),
         danmaku: () => this.setDanmaku(!this.s.danmaku),
         solo: () => this.onSolo(this),
+        aggregate: () => this.onAggregate(this),
         focus: () => this.onFocus(this),
         data: () => this.onData(this),
         pip: () => this.togglePictureInPicture(),
@@ -355,7 +361,7 @@ export class Tile {
   connectDanmaku() {
     if (this.dm) return;
     this.dm = new DanmakuClient(this.s.rid, {
-      onChat: (c) => { if (this.danmakuFilter.accept(c.text)) this.renderer.push(c.text, c.color); },
+      onChat: (c) => { if (this.danmakuFilter.accept(c.text)) this.handleDanmaku(c); },
       onStatus: (e) => {
         if (e.type !== 'live') return;
         const changed = this.setRoomLive(e.live);
@@ -365,6 +371,23 @@ export class Tile {
       },
     });
     this.dm.connect();
+  }
+
+  handleDanmaku(chat) {
+    this.onDanmaku(this, chat);
+  }
+
+  pushDanmaku(text, color) {
+    this.renderer.push(text, color);
+  }
+
+  setAggregate(on) {
+    const active = !!on;
+    this.el.classList.toggle('aggregate-active', active);
+    this.$.aggregate.classList.toggle('on', active);
+    this.$.aggregate.setAttribute('aria-pressed', String(active));
+    this.$.aggregate.title = active ? '关闭弹幕聚合' : '开启弹幕聚合';
+    this.$.aggregate.setAttribute('aria-label', active ? '关闭弹幕聚合' : '开启弹幕聚合');
   }
 
   onPlayerState({ state, message }) {
