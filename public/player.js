@@ -2,7 +2,10 @@
 // 流地址带 wsAuth token 会过期，出错或长时间不推进就重新签名换地址
 const STALL_MS = 15_000;
 const MAX_RETRY = 6;
-const STALE_LATENCY_SECONDS = 8;
+const STALE_LATENCY_SECONDS = 3;
+const FRAME_STALL_MS = 6_000;
+const RECOVERY_COOLDOWN_MS = 15_000;
+const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
 
 const filteredConsoleMethods = new WeakSet();
@@ -12,6 +15,11 @@ const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap
 const STARTUP_STALL_WARNING = /^\[StartupStallJumper\] > Playback seems stuck at \d+(?:\.\d+)?, seek to \d+(?:\.\d+)?$/;
 const EARLY_EOF_WARNING = /(?:Fetch stream meet Early-EOF|UnrecoverableEarlyEof)/i;
 const UNCONSUMED_DATA_WARNING = /^\[IOController\] > \d+ bytes unconsumed data remain when flush buffer, dropped$/;
+// Chrome reports a SourceBuffer error after a decoder rejects one malformed
+// segment. mpegts.js emits the same condition through its ERROR event and the
+// player already performs the retry, so avoid duplicating it as an uncaught
+// console error (which otherwise obscures the actual recovery state).
+const SOURCE_BUFFER_APPEND_ERROR = /^\[MSEController\] > Failed to execute 'appendBuffer' on 'SourceBuffer':/;
 
 const STREAM_UPDATE_WARNINGS = new Set([
   '[FLVDemuxer] > AVCDecoderConfigurationRecord has been changed, re-generate initialization segment',
@@ -22,7 +30,8 @@ const STREAM_UPDATE_WARNINGS = new Set([
 function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
-    || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message);
+    || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
+    || SOURCE_BUFFER_APPEND_ERROR.test(message);
 }
 
 function isEarlyEofError(type, detail) {
@@ -55,13 +64,15 @@ function configureLogging(mpegts) {
 }
 
 const CONFIG = {
+  // mpegts.js 的 Blob Worker 不符合当前扩展 CSP，保留主线程回退路径。
   enableWorker: false,
-  liveBufferLatencyChasing: true,
-  liveBufferLatencyMaxLatency: 3.0,
-  liveBufferLatencyMinRemain: 0.4,
+  // 应用层统一追帧，避免库和看门狗同时 seek。
+  liveBufferLatencyChasing: false,
   lazyLoad: false,
   stashInitialSize: 128,
   autoCleanupSourceBuffer: true,
+  autoCleanupMaxBackwardDuration: 30,
+  autoCleanupMinBackwardDuration: 15,
 };
 
 export class Player {
@@ -71,18 +82,26 @@ export class Player {
     this.onState = onState || (() => {});
     this.random = random;
     // 用户手动起播后即时收掉遮罩
-    video.addEventListener('playing', () => {
-      if (this.mp && !this.destroyed) this.emit('playing');
-    });
+    this.onPlaying = () => {
+      if (this.mp && !this.destroyed) {
+        this.resetFrameSamples();
+        if (!this.retryForce) this.emit('playing');
+      }
+    };
+    video.addEventListener('playing', this.onPlaying);
     // playing 只在「暂停→播放」时触发。画面没停过、只是抛了个非致命错误的场景收不到它，
-    // 所以另外用 timeupdate 当恢复信号：只要还在推进就说明是好的。
-    video.addEventListener('timeupdate', () => {
+    // timeupdate 只说明媒体时钟推进；视频呈现异常由独立帧采样处理。
+    this.onTimeUpdate = () => {
       if (this.destroyed || !this.mp || this.video.paused) return;
-      this.lastTime = this.video.currentTime;
-      this.lastMove = Date.now();
+      if (this.video.currentTime > this.lastTime + 0.05) {
+        this.lastTime = this.video.currentTime;
+        this.lastMove = Date.now();
+      }
+      if (this.retryForce) return;
       this.state = 'playing';
       this.onState({ state: 'progress', message: '', retry: this.retry });
-    });
+    };
+    video.addEventListener('timeupdate', this.onTimeUpdate);
     this.mp = null;
     this.retry = 0;
     this.retryTimer = 0;
@@ -100,6 +119,22 @@ export class Player {
     this.waitingForOnline = false;
     this.state = 'offline';
     this.lastError = '';
+    this.frameVisible = true;
+    this.frameCallback = null;
+    this.frameEpoch = 0;
+    this.recoveryCount = 0;
+    this.lastRecoveryReason = '';
+    this.lastRecoveryAt = -Infinity;
+    this.recoveryStage = 0;
+    this.pendingAlignment = false;
+    this.onSeeking = () => this.resetFrameSamples();
+    this.onProgress = () => {
+      if (this.pendingAlignment && this.alignRecoveredMedia()) this.pendingAlignment = false;
+    };
+    video.addEventListener('seeking', this.onSeeking);
+    video.addEventListener('progress', this.onProgress);
+    video.addEventListener('loadeddata', this.onProgress);
+    this.resetFrameSamples();
   }
 
   emit(state, message = '') {
@@ -130,6 +165,8 @@ export class Player {
       configureLogging(window.mpegts);
       const mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, CONFIG);
       this.mp = mp;
+      this.pendingAlignment = recovering;
+      this.startFrameMonitor();
       mp.attachMediaElement(this.video);
       this.video.muted = wasMuted;
       this.video.volume = wasVolume;
@@ -143,7 +180,7 @@ export class Player {
       mp.on(mpegts.Events.MEDIA_INFO, () => {
         if (this.mp !== mp) return;
         // 重连会复用同一个 video 元素；从新流的缓冲尾部重新建立音视频共同时间基准。
-        if (recovering) this.alignRecoveredMedia();
+        if (recovering) this.onProgress();
         this.retry = 0;
         this.lastTime = this.video.currentTime;
         this.lastMove = Date.now();
@@ -171,15 +208,88 @@ export class Player {
     }
   }
 
+  resetFrameSamples() {
+    this.sampleAfter = Date.now() + SAMPLE_GRACE_MS;
+    this.lastFrameAt = Date.now();
+    this.lastFrameMediaTime = null;
+    this.frameSkewSeconds = null;
+    this.frameAnomaly = false;
+    this.staleLatencySamples = 0;
+    this.qualitySample = null;
+    this.recentDroppedRatio = 0;
+  }
+
+  startFrameMonitor() {
+    this.resetFrameSamples();
+    if (!this.video.requestVideoFrameCallback) return;
+    const epoch = ++this.frameEpoch;
+    const sample = (_now, metadata) => {
+      if (epoch !== this.frameEpoch || this.destroyed || !this.mp) return;
+      if (this.pageVisible && !this.video.seeking && !this.video.paused) {
+        if (metadata.mediaTime !== this.lastFrameMediaTime) this.lastFrameAt = Date.now();
+        this.lastFrameMediaTime = metadata.mediaTime;
+        // 这是呈现时间线偏差线索，并非音频输出时间戳或精确音画差。
+        this.frameSkewSeconds = Number.isFinite(metadata.mediaTime)
+          ? Math.abs(this.video.currentTime - metadata.mediaTime) : null;
+      }
+      this.frameCallback = this.video.requestVideoFrameCallback(sample);
+    };
+    this.frameCallback = this.video.requestVideoFrameCallback(sample);
+  }
+
   alignRecoveredMedia() {
     const v = this.video;
     try {
-      if (v.buffered?.length) {
-        const end = v.buffered.end(v.buffered.length - 1);
-        const target = Math.max(0, end - CONFIG.liveBufferLatencyMinRemain);
-        if (Number.isFinite(target) && Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
-      }
-    } catch {}
+      if (!v.buffered?.length) return false;
+      const index = v.buffered.length - 1;
+      const start = v.buffered.start(index);
+      const end = v.buffered.end(index);
+      if (end - start < 0.25) return false;
+      const target = Math.max(start, end - 1);
+      if (!Number.isFinite(target)) return false;
+      v.currentTime = target;
+      this.resetFrameSamples();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  checkPlaybackHealth() {
+    const v = this.video;
+    const now = Date.now();
+    const quality = v.getVideoPlaybackQuality?.();
+    if (quality) {
+      const previous = this.qualitySample;
+      const total = quality.totalVideoFrames - (previous?.totalVideoFrames ?? quality.totalVideoFrames);
+      const dropped = quality.droppedVideoFrames - (previous?.droppedVideoFrames ?? quality.droppedVideoFrames);
+      this.recentDroppedRatio = total > 0 ? Math.max(0, Math.min(1, dropped / total)) : 0;
+      this.qualitySample = { totalVideoFrames: quality.totalVideoFrames, droppedVideoFrames: quality.droppedVideoFrames };
+    }
+    if (!this.pageVisible || !this.online || v.paused || v.seeking || v.readyState < 2 || now < this.sampleAfter) {
+      this.staleLatencySamples = 0;
+      this.frameAnomaly = false;
+      return false;
+    }
+    const frameObservable = this.frameVisible || document.pictureInPictureElement === v;
+    this.frameAnomaly = frameObservable && !!v.requestVideoFrameCallback &&
+      (now - this.lastFrameAt > FRAME_STALL_MS || this.frameSkewSeconds > 0.75);
+    const latency = this.liveLatency();
+    const anomalous = this.frameAnomaly || latency > STALE_LATENCY_SECONDS;
+    this.staleLatencySamples = anomalous ? this.staleLatencySamples + 1 : 0;
+    if (!anomalous && now - this.lastRecoveryAt > 30_000) this.recoveryStage = 0;
+    if (this.staleLatencySamples < STALE_LATENCY_SAMPLES || now - this.lastRecoveryAt < RECOVERY_COOLDOWN_MS) return false;
+    this.lastRecoveryReason = this.frameAnomaly ? '视频帧呈现落后或停滞' : `播放缓冲积压（${latency.toFixed(1)}s）`;
+    this.lastRecoveryAt = now;
+    this.recoveryCount++;
+    this.staleLatencySamples = 0;
+    if (this.recoveryStage === 0 && this.alignRecoveredMedia()) {
+      this.recoveryStage = 1;
+    } else {
+      this.recoveryStage = 0;
+      this.fail(this.lastRecoveryReason, { force: true });
+    }
+    return true;
   }
 
   // 画面是否确实在正常播放。用于把 mpegts 的非致命 ERROR 和真故障区分开。
@@ -212,14 +322,7 @@ export class Player {
         this.lastTime = t;
         this.lastMove = Date.now();
       }
-      const latency = this.liveLatency();
-      if (latency > STALE_LATENCY_SECONDS) this.staleLatencySamples++;
-      else this.staleLatencySamples = 0;
-      if (this.staleLatencySamples >= STALE_LATENCY_SAMPLES) {
-        this.staleLatencySamples = 0;
-        this.fail(`直播延迟过高（${latency.toFixed(1)}s）`, { force: true });
-        return;
-      }
+      if (this.checkPlaybackHealth()) return;
       // UI 里没有暂停按钮，所以 paused 一定是意外（多为 DOM 移动导致），先尝试续播
       if (this.video.paused) {
         if (this.video.readyState >= 2) this.video.play().catch(() => {});
@@ -300,8 +403,14 @@ export class Player {
     this.teardown();
   }
 
+  setFrameVisible(visible) {
+    this.frameVisible = !!visible;
+    this.resetFrameSamples();
+  }
+
   setPageVisible(visible) {
     this.pageVisible = !!visible;
+    this.resetFrameSamples();
     if (this.pageVisible && this.mp) {
       this.lastTime = this.video.currentTime;
       this.lastMove = Date.now();
@@ -324,10 +433,15 @@ export class Player {
 
   diagnostics() {
     const quality = this.video.getVideoPlaybackQuality?.();
-    const buffered = this.video.buffered;
-    let bufferSeconds = 0;
-    if (buffered?.length) bufferSeconds = Math.max(0, buffered.end(buffered.length - 1) - this.video.currentTime);
+    const bufferSeconds = this.liveLatency();
     return {
+      frameMonitoring: !this.video.requestVideoFrameCallback ? 'unsupported'
+        : (!this.pageVisible || (!this.frameVisible && document.pictureInPictureElement !== this.video) || this.video.paused || this.video.seeking || this.video.readyState < 2 || Date.now() < this.sampleAfter) ? 'suspended' : 'active',
+      frameSkewSeconds: this.frameSkewSeconds,
+      frameAnomaly: this.frameAnomaly,
+      recentDroppedRatio: this.recentDroppedRatio,
+      recoveryCount: this.recoveryCount,
+      lastRecoveryReason: this.lastRecoveryReason,
       state: this.state,
       retry: this.retry,
       lastError: this.lastError,
@@ -341,29 +455,41 @@ export class Player {
   }
 
   teardown() {
+    this.frameEpoch++;
+    if (this.frameCallback !== null) this.video.cancelVideoFrameCallback?.(this.frameCallback);
+    this.frameCallback = null;
+    this.pendingAlignment = false;
+    this.resetFrameSamples();
     clearInterval(this.watchdog);
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
     this.loadController?.abort();
     this.loadController = null;
+    if (this.mp) {
+      const mp = this.mp;
+      this.mp = null;
+      // 某一步抛错也必须继续释放后续资源。
+      for (const method of ['pause', 'unload', 'detachMediaElement', 'destroy']) {
+        try { mp[method](); } catch {}
+      }
+    }
+    // Detach/destroy mpegts before resetting the media element. Resetting the
+    // element first can race a queued appendBuffer and leave Chrome with a
+    // detached SourceBuffer (followed by a null.length exception).
     try {
       this.video.playbackRate = 1;
       this.video.pause();
       this.video.removeAttribute('src');
       this.video.load();
     } catch {}
-    if (this.mp) {
-      try {
-        this.mp.pause();
-        this.mp.unload();
-        this.mp.detachMediaElement();
-        this.mp.destroy();
-      } catch {}
-      this.mp = null;
-    }
   }
 
   destroy() {
+    this.video.removeEventListener('playing', this.onPlaying);
+    this.video.removeEventListener('timeupdate', this.onTimeUpdate);
+    this.video.removeEventListener('seeking', this.onSeeking);
+    this.video.removeEventListener('progress', this.onProgress);
+    this.video.removeEventListener('loadeddata', this.onProgress);
     this.destroyed = true;
     this.generation++;
     this.teardown();

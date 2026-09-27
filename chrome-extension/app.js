@@ -1440,6 +1440,8 @@ function renderDiagnostics() {
       item.rateName || '未知清晰度',
       item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知',
       `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
+      `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
+      item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
       item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
     ];
     values.forEach((value, index) => {
@@ -1461,7 +1463,8 @@ function diagnosticsText() {
     ...collectDiagnostics().map((item) =>
       `[${item.rid}] ${item.title} | ${STATE_LABELS[item.state] || item.state} | ${item.rateName || '-'} | ` +
       `${item.width || 0}x${item.height || 0} | buffer=${item.bufferSeconds.toFixed(1)}s | ` +
-      `dropped=${item.droppedFrames}/${item.totalFrames} | retry=${item.retry} | ` +
+      `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
+      `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
       `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
       (item.lastError ? ` | error=${item.lastError}` : '')
     ),

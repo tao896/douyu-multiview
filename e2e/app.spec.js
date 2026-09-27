@@ -149,7 +149,8 @@ test('opens one stream, exposes focus/diagnostics, notification and backup contr
   expect(download.suggestedFilename()).toMatch(/^douyu-multiview-.*\.json$/);
 });
 
-test('reconnects after Early-EOF and closes today data by clicking the dialog backdrop', async ({ page }) => {
+test('reconnects after Early-EOF, escalates persistent buffering and closes today data', async ({ page }) => {
+  test.setTimeout(60_000);
   const counts = await mockApplication(page);
   await page.goto('/');
   await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
@@ -160,12 +161,17 @@ test('reconnects after Early-EOF and closes today data by clicking the dialog ba
   await expect.poll(() => counts.stream, { timeout: 5_000 }).toBeGreaterThan(0);
   const streamCount = counts.stream;
   await page.locator('video').evaluate((video) => {
+    Object.defineProperty(video, 'readyState', { configurable: true, get: () => 4 });
+    Object.defineProperty(video, 'requestVideoFrameCallback', { configurable: true, value: undefined });
     Object.defineProperty(video, 'buffered', {
       configurable: true,
-      get: () => ({ length: 1, end: () => video.currentTime + 9 }),
+      get: () => ({ length: 1, start: () => 0, end: () => video.currentTime + 9 }),
     });
   });
-  await expect.poll(() => counts.stream, { timeout: 12_000 }).toBeGreaterThan(streamCount);
+  // 首次持续积压只 seek；冷却后仍持续积压才重建播放器。
+  await expect.poll(() => page.locator('video').evaluate(video => video.currentTime), { timeout: 12_000 }).toBeGreaterThan(0);
+  expect(counts.stream).toBe(streamCount);
+  await expect.poll(() => counts.stream, { timeout: 25_000 }).toBeGreaterThan(streamCount);
 
   const tile = page.locator('article.tile');
   await revealTileControls(tile);

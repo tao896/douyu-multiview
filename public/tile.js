@@ -112,9 +112,10 @@ export class Tile {
         const visible = !!entry?.isIntersecting;
         if (this.visible === visible) return;
         this.visible = visible;
+        this.player.setFrameVisible(visible);
         this.renderer.setActive(visible && !document.hidden);
         this.onVisibility(this, visible);
-      }, { rootMargin: '100px' });
+      }); // 帧停滞检测需要真实视口可见性，不能把视口外预留区域算作可见。
       this.visibilityObserver.observe(this.el);
     }
   }
