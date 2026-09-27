@@ -192,13 +192,24 @@ syncBarHeight();
 function setToolbarHidden(hidden, { persist = true, focusControl = false } = {}) {
   const next = !!hidden;
   hideToolbarTooltip();
+  // Move focus out of the toolbar before hiding its accessibility subtree.
+  // Otherwise Chrome reports that a focused descendant is being hidden by
+  // aria-hidden (and inert cannot prevent that warning after the fact).
+  if (next && focusControl && bar.contains(document.activeElement)) {
+    $('toolbarRevealBtn').focus();
+  }
   document.body.classList.toggle('toolbar-hidden', next);
-  bar.setAttribute('aria-hidden', String(next));
-  bar.inert = next;
+  if (!next) {
+    bar.inert = false;
+    bar.setAttribute('aria-hidden', 'false');
+  } else {
+    bar.inert = true;
+    bar.setAttribute('aria-hidden', 'true');
+  }
   $('toolbarHideBtn').setAttribute('aria-expanded', String(!next));
   $('toolbarRevealBtn').setAttribute('aria-expanded', String(!next));
   syncBarHeight();
-  if (focusControl) requestAnimationFrame(() => $(next ? 'toolbarRevealBtn' : 'toolbarHideBtn').focus());
+  if (focusControl && !next) requestAnimationFrame(() => $('toolbarHideBtn').focus());
   if (persist) save({ immediate: true });
 }
 
@@ -784,7 +795,7 @@ function toggleAggregate(tile) {
 }
 
 function dispatchDanmaku(source, chat) {
-  if (!source.s.danmaku) return;
+  if (!source.s.danmaku || source.live !== true) return;
   const target = aggregateTile || source;
   const label = source.s.nickname || source.s.title || `房间 ${source.s.rid}`;
   const text = aggregateTile && source !== target ? `[${label}] ${chat.text}` : chat.text;
