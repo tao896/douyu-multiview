@@ -73,6 +73,7 @@ export class Tile {
       avatar: q('[data-avatar]'),
       title: q('[data-title]'),
       nickname: q('[data-nickname]'),
+      watermark: q('[data-watermark]'),
       rid: q('[data-rid]'),
       status: q('[data-status]'),
       video: q('[data-video]'),
@@ -94,6 +95,8 @@ export class Tile {
     };
     this.updateTitleLink(this.s.title || '加载中…');
     this.$.nickname.textContent = this.s.nickname || '';
+    this.$.watermark.textContent = this.s.nickname || '';
+    this.$.watermark.hidden = !this.s.nickname?.trim();
     this.$.rid.textContent = `房间 ${this.s.rid}`;
     if (this.s.avatar) this.$.avatar.src = this.s.avatar;
     this.$.avatar.addEventListener('error', () => (this.$.avatar.hidden = true));
@@ -294,6 +297,8 @@ export class Tile {
     this.el.dataset.rid = this.s.rid;
     this.updateTitleLink(this.s.title || `房间 ${this.s.rid}`);
     this.$.nickname.textContent = this.s.nickname || '';
+    this.$.watermark.textContent = this.s.nickname || '';
+    this.$.watermark.hidden = !this.s.nickname?.trim();
     this.$.rid.textContent = `房间 ${this.s.rid}`;
     if (this.s.avatar && this.$.avatar.src !== this.s.avatar) this.$.avatar.src = this.s.avatar;
 
