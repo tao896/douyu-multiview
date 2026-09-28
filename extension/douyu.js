@@ -166,13 +166,19 @@ export function getRoomInfo(rid) {
   if (cached?.promise) return cached.promise;
 
   const promise = limitRoomInfo(async () => {
-    const response = await upstreamFetch(`${ORIGIN}/betard/${rid}`);
-    if (!response.ok) {
-      throw new DouyuError(`房间信息获取失败 HTTP ${response.status}`, {
-        status: response.status === 404 ? 404 : 502,
-      });
+    const fetchRoom = async (roomId) => {
+      const response = await upstreamFetch(`${ORIGIN}/betard/${roomId}`);
+      if (!response.ok && response.status !== 404) {
+        throw new DouyuError(`房间信息获取失败 HTTP ${response.status}`);
+      }
+      return response.ok ? response.json().catch(() => null) : null;
+    };
+    let data = await fetchRoom(rid);
+    if (!data?.room) {
+      // 靓号不能直接用于 betard；从直播页解析真实房间号后重试一次。
+      const canonicalRid = await resolvePageRid(`${ORIGIN}/${rid}`);
+      if (canonicalRid !== String(rid)) data = await fetchRoom(canonicalRid);
     }
-    const data = await response.json().catch(() => null);
     if (!data?.room) throw new DouyuError('房间不存在或暂不可用', { status: 404 });
     const room = data.room;
     return {
@@ -215,7 +221,11 @@ export async function resolveRid(input) {
   const lastSegment = url.pathname.split('/').filter(Boolean).pop() || '';
   if (/^\d{1,12}$/.test(lastSegment)) return lastSegment;
 
-  const response = await upstreamFetch(url.toString());
+  return resolvePageRid(url.toString());
+}
+
+async function resolvePageRid(url) {
+  const response = await upstreamFetch(url);
   if (!response.ok) throw new DouyuError(`地址解析失败 HTTP ${response.status}`);
   const html = await response.text();
   const match =
