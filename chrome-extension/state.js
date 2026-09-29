@@ -78,6 +78,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
     sidebarCollapsedDesktop: !!raw.sidebarCollapsedDesktop,
     sidebarHiddenDesktop: !!raw.sidebarHiddenDesktop,
     toolbarHidden: !!raw.toolbarHidden,
+    showRoomStats: raw.showRoomStats !== false,
     hideOfflineWindows: !!raw.hideOfflineWindows,
     layoutMode: raw.layoutMode === 'focus' ? 'focus' : 'grid',
     focusedRid: seen.has(String(raw.focusedRid)) ? String(raw.focusedRid) : '',

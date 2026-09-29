@@ -688,7 +688,15 @@ test('daily statistics watermark matches attachment and survives reconnect', asy
   await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：123');
   await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5492.60');
   fishValue = '5500.00';
+  const statsToggle = page.locator('#roomStatsBtn');
+  await expect(statsToggle).toHaveAttribute('aria-pressed', 'true');
+  await statsToggle.click();
+  await expect(stats).toBeHidden();
+  await expect(statsToggle).toHaveAccessibleName('显示统计水印');
+  await expect(page.locator('[data-watermark]')).toBeVisible();
   await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5500.00', { timeout: 12000 });
+  await statsToggle.click();
+  await expect(stats).toBeVisible();
   await expect(page.locator('[data-watermark]')).toHaveText('测试主播');
   const rects = await page.locator('.stage').evaluate(el => {
     const a = el.getBoundingClientRect(), b = el.querySelector('[data-stats]').getBoundingClientRect();
@@ -700,4 +708,20 @@ test('daily statistics watermark matches attachment and survives reconnect', asy
   await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5500.00');
   unavailable = true;
   await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：--', { timeout: 12000 });
+  await statsToggle.click();
+  await page.reload();
+  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(stats).toBeHidden();
+  await page.locator('#addInput').fill('8888');
+  await page.locator('#addBtn').click();
+  await expect(stats).toHaveCount(2);
+  for (const watermark of await stats.all()) await expect(watermark).toBeHidden();
+  await page.locator('#workspaceCloneBtn').click();
+  await expect(page.locator('#workspaceSelect option')).toHaveCount(2);
+  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
+  await statsToggle.click();
+  const originalId = await page.locator('#workspaceSelect option').first().getAttribute('value');
+  await page.locator('#workspaceSelect').selectOption(originalId);
+  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
+  for (const watermark of await stats.all()) await expect(watermark).toBeHidden();
 });

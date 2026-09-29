@@ -129,6 +129,7 @@ function snapshotActiveWorkspace() {
   current.sidebarCollapsedDesktop = workspaceEl.classList.contains('sidebar-collapsed');
   current.sidebarHiddenDesktop = workspaceEl.classList.contains('sidebar-hidden');
   current.toolbarHidden = document.body.classList.contains('toolbar-hidden');
+  current.showRoomStats = !document.body.classList.contains('room-stats-hidden');
   current.hideOfflineWindows = hideOfflineWindows;
   current.layoutMode = grid.dataset.layout === 'focus' ? 'focus' : 'grid';
   current.layoutPreset = $('layoutPresetSelect').value;
@@ -331,6 +332,20 @@ function setHideOfflineWindows(hidden, { persist = true } = {}) {
 }
 
 $('hideOfflineBtn').addEventListener('click', () => setHideOfflineWindows(!hideOfflineWindows));
+
+function setShowRoomStats(visible, { persist = true } = {}) {
+  const enabled = visible !== false;
+  document.body.classList.toggle('room-stats-hidden', !enabled);
+  const button = $('roomStatsBtn');
+  button.classList.toggle('on', enabled);
+  button.setAttribute('aria-pressed', String(enabled));
+  setToolbarButtonLabel(button, enabled ? '隐藏统计水印' : '显示统计水印');
+  if (persist) save({ immediate: true });
+}
+
+$('roomStatsBtn').addEventListener('click', () =>
+  setShowRoomStats(document.body.classList.contains('room-stats-hidden'))
+);
 
 function addRoom(state, { live = null, persist = true } = {}) {
   const normalized = normalizeRoomState(state);
@@ -957,6 +972,7 @@ function loadWorkspaceRuntime(current) {
   $('ecoModeBtn').classList.toggle('on', !!current.ecoMode);
   $('ecoModeBtn').setAttribute('aria-pressed', String(!!current.ecoMode));
   setToolbarHidden(current.toolbarHidden, { persist: false });
+  setShowRoomStats(current.showRoomStats, { persist: false });
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
   setSidebarHidden(current.sidebarHiddenDesktop, { persist: false });
   for (const state of current.rooms) addRoom(state, { persist: false });

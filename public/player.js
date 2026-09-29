@@ -21,6 +21,9 @@ const UNCONSUMED_DATA_WARNING = /^\[IOController\] > \d+ bytes unconsumed data r
 // player already performs the retry, so avoid duplicating it as an uncaught
 // console error (which otherwise obscures the actual recovery state).
 const SOURCE_BUFFER_APPEND_ERROR = /^\[MSEController\] > Failed to execute 'appendBuffer' on 'SourceBuffer':/;
+// 流地址过期或 CDN 切换时，mpegts 会先输出 404，再由播放器重新签名重连。
+// 这属于已处理的瞬态事件，避免 Chrome 控制台显示为未捕获错误。
+const LOADER_404_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = 404, msg = Not Found|IOException: type = HttpStatusCodeInvalid, code = 404, msg = Not Found)$/;
 
 const STREAM_UPDATE_WARNINGS = new Set([
   '[FLVDemuxer] > AVCDecoderConfigurationRecord has been changed, re-generate initialization segment',
@@ -32,7 +35,7 @@ function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
     || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
-    || SOURCE_BUFFER_APPEND_ERROR.test(message);
+    || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message);
 }
 
 function isEarlyEofError(type, detail) {
