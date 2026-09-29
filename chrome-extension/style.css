@@ -953,11 +953,13 @@ body.room-dragging { user-select: none; cursor: grabbing; }
      resize() 写属性 → 元素变大 → ResizeObserver 再触发，逐次放大直到上限 */
   width: 100%;
   height: 100%;
+  z-index: 2;
   pointer-events: none;
 }
 
 .room-watermark {
   position: absolute;
+  z-index: 1;
   right: 12px;
   bottom: 12px;
   max-width: calc(100% - 24px);
