@@ -7,6 +7,7 @@ const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
+const PAGE_RESYNC_MS = 10_000;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
@@ -115,6 +116,7 @@ export class Player {
     this.generation = 0;
     this.loadController = null;
     this.pageVisible = !document.hidden;
+    this.pageHiddenAt = this.pageVisible ? 0 : Date.now();
     this.online = navigator.onLine !== false;
     this.waitingForOnline = false;
     this.state = 'offline';
@@ -127,6 +129,9 @@ export class Player {
     this.lastRecoveryAt = -Infinity;
     this.recoveryStage = 0;
     this.pendingAlignment = false;
+    this.visibilityRecoveryCount = 0;
+    this.lastVisibilityRecoveryAt = -Infinity;
+    this.lastVisibilityRecoveryReason = '';
     this.onSeeking = () => this.resetFrameSamples();
     this.onProgress = () => {
       if (this.pendingAlignment && this.alignRecoveredMedia()) this.pendingAlignment = false;
@@ -172,10 +177,15 @@ export class Player {
       this.video.volume = wasVolume;
       this.video.playbackRate = 1;
 
-      mp.on(mpegts.Events.ERROR, (type, detail) => {
+      mp.on(mpegts.Events.ERROR, (type, detail, info) => {
         if (this.mp !== mp) return;
-        // 网络错误多半是 token 过期，重新取流即可
-        this.fail(`${type}${detail ? ': ' + detail : ''}`, { force: isEarlyEofError(type, detail) });
+        // HTTP failures terminate the loader even while old buffered frames still play.
+        // Fetch a fresh signed URL rather than treating that buffer as network recovery.
+        const httpFailure = detail === 'HttpStatusCodeInvalid';
+        const status = httpFailure && info?.code ? ` (HTTP ${info.code})` : '';
+        this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
+          force: httpFailure || isEarlyEofError(type, detail),
+        });
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
         if (this.mp !== mp) return;
@@ -360,7 +370,10 @@ export class Player {
       return;
     }
     // 一次失败常会连续抛出多个底层事件；同一退避窗口只计为一次重试。
-    if (this.retryTimer) return;
+    if (this.retryTimer) {
+      this.retryForce ||= force;
+      return;
+    }
     clearInterval(this.watchdog);
     if (this.retry >= MAX_RETRY) {
       this.emit('error', `${reason}（已重试 ${this.retry} 次）`);
@@ -409,13 +422,39 @@ export class Player {
   }
 
   setPageVisible(visible) {
-    this.pageVisible = !!visible;
-    this.resetFrameSamples();
-    if (this.pageVisible && this.mp) {
-      this.lastTime = this.video.currentTime;
-      this.lastMove = Date.now();
-      this.startWatchdog();
+    const next = !!visible;
+    if (next === this.pageVisible) return;
+    if (!next) {
+      this.pageVisible = false;
+      this.pageHiddenAt = Date.now();
+      this.resetFrameSamples();
+      return;
     }
+
+    const hiddenFor = this.pageHiddenAt > 0 ? Math.max(0, Date.now() - this.pageHiddenAt) : 0;
+    this.pageVisible = true;
+    this.pageHiddenAt = 0;
+    this.resetFrameSamples();
+    if (!this.mp) return;
+
+    // 后台标签页可能继续向 MSE 音频轨追加旧数据。停留较久后直接重建，
+    // 让新的音频和视频从同一个直播时间基准开始，避免只 seek 视频轨仍然错位。
+    const inPictureInPicture = document.pictureInPictureElement === this.video;
+    if (hiddenFor >= PAGE_RESYNC_MS && !inPictureInPicture && this.online) {
+      this.visibilityRecoveryCount++;
+      this.lastVisibilityRecoveryAt = Date.now();
+      this.lastVisibilityRecoveryReason = `页面后台 ${Math.round(hiddenFor / 1000)}s 后重建播放器`;
+      this.retry = 0;
+      this.retryForce = false;
+      clearTimeout(this.retryTimer);
+      this.retryTimer = 0;
+      this.load();
+      return;
+    }
+
+    this.lastTime = this.video.currentTime;
+    this.lastMove = Date.now();
+    this.startWatchdog();
   }
 
   setOnline(online) {
@@ -442,6 +481,8 @@ export class Player {
       recentDroppedRatio: this.recentDroppedRatio,
       recoveryCount: this.recoveryCount,
       lastRecoveryReason: this.lastRecoveryReason,
+      visibilityRecoveryCount: this.visibilityRecoveryCount,
+      lastVisibilityRecoveryReason: this.lastVisibilityRecoveryReason,
       state: this.state,
       retry: this.retry,
       lastError: this.lastError,

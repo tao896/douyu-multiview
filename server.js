@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { getStream, getRoomInfo, resolveRid } from './lib/douyu.js';
+import { getRoomGiftValue, getStream, getRoomInfo, resolveRid } from './lib/douyu.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -101,6 +101,10 @@ async function handleApi(req, res, url) {
     const rid = parseRid(url.searchParams.get('rid'));
     const rate = parseRate(url.searchParams.get('rate'));
     return sendJson(res, 200, { rid, stream: await getStream(rid, rate) }, head);
+  }
+
+  if (url.pathname === '/api/room-gift-value') {
+    return sendJson(res, 200, await getRoomGiftValue(parseRid(url.searchParams.get('rid'))), head);
   }
 
   if (url.pathname === '/api/room') {

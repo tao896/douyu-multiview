@@ -1,4 +1,4 @@
-import { getRoomInfo, getStream, resolveRid } from './douyu.js';
+import { getRoomGiftValue, getRoomInfo, getStream, resolveRid } from './douyu.js';
 
 function parseRid(value) {
   const rid = String(value || '');
@@ -43,6 +43,8 @@ export async function handleApiPath(path) {
     const rate = parseRate(url.searchParams.get('rate'));
     return { rid, stream: await getStream(rid, rate) };
   }
+
+  if (url.pathname === '/api/room-gift-value') return getRoomGiftValue(parseRid(url.searchParams.get('rid')));
 
   if (url.pathname === '/api/room') {
     return getRoomInfo(parseRid(url.searchParams.get('rid')));

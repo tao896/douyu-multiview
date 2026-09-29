@@ -973,6 +973,9 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   user-select: none;
 }
 
+.room-stats { top: 12px; bottom: auto; text-align: right; }
+.room-stats span { display: block; }
+
 .overlay {
   position: absolute;
   inset: 0;

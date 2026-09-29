@@ -182,6 +182,28 @@ test('reconnects after Early-EOF, escalates persistent buffering and closes toda
   await expect(dialog).toBeHidden();
 });
 
+test('rebuilds the stream after returning from a long hidden page', async ({ page }) => {
+  const counts = await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect(page.locator('article.tile')).toBeVisible();
+  const streamCount = counts.stream;
+
+  await page.evaluate(() => {
+    let now = Date.now();
+    Date.now = () => now;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    now += 10_001;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  await expect.poll(() => counts.stream, { timeout: 5_000 }).toBeGreaterThan(streamCount);
+  await expect(page.getByText('直播中', { exact: true })).toBeVisible();
+});
+
 test('sound-enabled tile has a green border and only title text is linked', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
@@ -607,4 +629,75 @@ test('holding a tile control keeps its toolbar visible until released', async ({
   await page.mouse.up();
   // 松开后重新计时并隐藏
   await expect(tile).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+});
+
+test('hiding the focused toolbar transfers focus to a visible control', async ({ page }) => {
+  const warnings = [];
+  page.on('console', message => {
+    if (message.text().includes('Blocked aria-hidden')) warnings.push(message.text());
+  });
+  await mockApplication(page);
+  await page.goto('/');
+  const hide = page.locator('#toolbarHideBtn');
+  const reveal = page.locator('#toolbarRevealBtn');
+  await hide.focus();
+  await hide.press('Enter');
+  await expect(reveal).toBeFocused();
+  await expect(page.locator('#topToolbar')).toHaveJSProperty('inert', true);
+  await reveal.press('Enter');
+  await expect(hide).toBeFocused();
+  await expect(page.locator('#topToolbar')).toHaveJSProperty('inert', false);
+  expect(warnings).toEqual([]);
+});
+
+test('daily statistics watermark matches attachment and survives reconnect', async ({ page }) => {
+  await mockApplication(page);
+  let fishValue = '5492.60';
+  let unavailable = false;
+  await page.route('**/api/room-gift-value?*', route => route.fulfill({
+    status: unavailable ? 502 : 200,
+    json: unavailable ? { error: 'unavailable' } : { fishValue },
+  }));
+  await page.addInitScript(() => {
+    window.WebSocket = class {
+      static OPEN = 1;
+      readyState = 1;
+      constructor() { window.__statsSocket = this; setTimeout(() => this.onopen?.(), 0); }
+      send() {}
+      close() {}
+    };
+    window.__statsMessage = text => {
+      const body = new TextEncoder().encode(text + '\0');
+      const buffer = new ArrayBuffer(12 + body.length);
+      const view = new DataView(buffer);
+      view.setUint32(0, body.length + 8, true);
+      view.setUint32(4, body.length + 8, true);
+      new Uint8Array(buffer, 12).set(body);
+      window.__statsSocket.onmessage({ data: buffer });
+    };
+  });
+  await page.goto('/');
+  await page.locator('#addInput').fill('9999');
+  await page.locator('#addBtn').click();
+  const stats = page.locator('[data-stats]');
+  await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5492.60');
+  await page.evaluate(() => {
+    window.__statsMessage('type@=oni/vn@=123/');
+    window.__statsMessage('type@=dgb/gfid@=20002/gfcnt@=3/');
+  });
+  await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：123');
+  await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5492.60');
+  fishValue = '5500.00';
+  await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5500.00', { timeout: 12000 });
+  await expect(page.locator('[data-watermark]')).toHaveText('测试主播');
+  const rects = await page.locator('.stage').evaluate(el => {
+    const a = el.getBoundingClientRect(), b = el.querySelector('[data-stats]').getBoundingClientRect();
+    return { top: b.top - a.top, right: a.right - b.right };
+  });
+  expect(rects).toEqual({ top: 12, right: 12 });
+  await page.evaluate(() => window.__statsSocket.onopen());
+  await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：--');
+  await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：5500.00');
+  unavailable = true;
+  await expect(stats.locator('[data-watermark-fish]')).toHaveText('鱼翅：--', { timeout: 12000 });
 });

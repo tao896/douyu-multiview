@@ -29,10 +29,11 @@ function parseFields(msg) {
 }
 
 export class DanmakuClient {
-  constructor(rid, { onChat, onStatus } = {}) {
+  constructor(rid, { onChat, onStatus, onStats } = {}) {
     this.rid = String(rid);
     this.onChat = onChat || (() => {});
     this.onStatus = onStatus || (() => {});
+    this.onStats = onStats || (() => {});
     this.ws = null;
     this.buf = new Uint8Array(0);
     this.timer = 0;
@@ -124,6 +125,10 @@ export class DanmakuClient {
       // 开播状态变化
       const f = parseFields(msg);
       this.onStatus({ type: 'live', live: f.ss === '1' });
+    } else if (type === 'oni') {
+      const f = parseFields(msg);
+      const noble = Number(f.vn);
+      if (f.vn?.trim() && Number.isSafeInteger(noble) && noble >= 0) this.onStats({ type: 'noble', value: noble });
     } else if (type === 'error') {
       this.onStatus({ type: 'error', msg: parseFields(msg).code || '' });
     }

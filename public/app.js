@@ -192,20 +192,13 @@ syncBarHeight();
 function setToolbarHidden(hidden, { persist = true, focusControl = false } = {}) {
   const next = !!hidden;
   hideToolbarTooltip();
-  // Move focus out of the toolbar before hiding its accessibility subtree.
-  // Otherwise Chrome reports that a focused descendant is being hidden by
-  // aria-hidden (and inert cannot prevent that warning after the fact).
-  if (next && focusControl && bar.contains(document.activeElement)) {
-    $('toolbarRevealBtn').focus();
-  }
+  const moveFocus = next && bar.contains(document.activeElement);
+  // Reveal the destination before focusing it: display:none buttons cannot receive focus.
   document.body.classList.toggle('toolbar-hidden', next);
-  if (!next) {
-    bar.inert = false;
-    bar.setAttribute('aria-hidden', 'false');
-  } else {
-    bar.inert = true;
-    bar.setAttribute('aria-hidden', 'true');
-  }
+  if (moveFocus) $('toolbarRevealBtn').focus({ preventScroll: true });
+  // inert hides the subtree from accessibility APIs and prevents keyboard focus.
+  bar.inert = next;
+  bar.removeAttribute('aria-hidden');
   $('toolbarHideBtn').setAttribute('aria-expanded', String(!next));
   $('toolbarRevealBtn').setAttribute('aria-expanded', String(!next));
   syncBarHeight();
@@ -1476,6 +1469,7 @@ function renderDiagnostics() {
       `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
       `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
       item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
+      item.visibilityRecoveryCount ? `切页重建 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页重建',
       item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
     ];
     values.forEach((value, index) => {
@@ -1499,6 +1493,7 @@ function diagnosticsText() {
       `${item.width || 0}x${item.height || 0} | buffer=${item.bufferSeconds.toFixed(1)}s | ` +
       `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
       `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
+      `visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +
       `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
       (item.lastError ? ` | error=${item.lastError}` : '')
     ),
