@@ -1486,6 +1486,7 @@ function renderDiagnostics() {
       item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知',
       `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
       `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
+      `音画同步 ${item.syncStatus === 'audio-leading' ? '声音领先' : item.syncStatus === 'video-leading' ? '画面领先' : item.syncStatus === 'normal' ? '正常' : '无法测量'}${item.syncOffsetSeconds == null ? '' : ` (${(item.syncOffsetSeconds * 1000).toFixed(0)}ms)`}`,
       item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
       item.visibilityRecoveryCount ? `切页追帧 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页追帧',
       item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
@@ -1512,6 +1513,7 @@ function diagnosticsText() {
       `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
       `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
       `visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +
+      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
       `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
       (item.lastError ? ` | error=${item.lastError}` : '')
     ),

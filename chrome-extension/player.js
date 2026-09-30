@@ -7,6 +7,9 @@ const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
+const SYNC_OBSERVE_MS = 250;
+const SYNC_WARN_SECONDS = 0.2;
+const SYNC_HARD_SECONDS = 0.5;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
@@ -138,6 +141,16 @@ export class Player {
     this.visibilityRecoveryCount = 0;
     this.lastVisibilityRecoveryAt = -Infinity;
     this.lastVisibilityRecoveryReason = '';
+    this.audioContext = null;
+    this.audioSource = null;
+    this.audioClockAnchor = null;
+    this.syncOffsetSeconds = null;
+    this.syncStatus = 'unmeasurable';
+    this.syncAnomalySince = 0;
+    this.syncSamples = 0;
+    this.syncEvents = [];
+    this.syncTimer = 0;
+    this.syncCorrectionAt = -Infinity;
     this.onSeeking = () => this.resetFrameSamples();
     this.onProgress = () => {
       if (this.pendingAlignment && this.alignRecoveredMedia()) this.pendingAlignment = false;
@@ -182,6 +195,8 @@ export class Player {
       this.video.muted = wasMuted;
       this.video.volume = wasVolume;
       this.video.playbackRate = 1;
+      if (!this.video.muted && this.video.volume > 0) this.ensureAudioClock();
+      this.startSyncMonitor();
 
       mp.on(mpegts.Events.ERROR, (type, detail, info) => {
         if (this.mp !== mp) return;
@@ -189,6 +204,7 @@ export class Player {
         // Fetch a fresh signed URL rather than treating that buffer as network recovery.
         const httpFailure = detail === 'HttpStatusCodeInvalid';
         const status = httpFailure && info?.code ? ` (HTTP ${info.code})` : '';
+        this.recordSyncEvent('mpegts-error', `${type}${detail ? ': ' + detail : ''}${status}`);
         this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
           force: httpFailure || detail === 'MediaMSEError' || isEarlyEofError(type, detail),
         });
@@ -201,6 +217,7 @@ export class Player {
         this.lastTime = this.video.currentTime;
         this.lastMove = Date.now();
         this.emit('playing');
+        this.recordSyncEvent('media-info');
       });
 
       mp.load();
@@ -233,6 +250,55 @@ export class Player {
     this.staleLatencySamples = 0;
     this.qualitySample = null;
     this.recentDroppedRatio = 0;
+  }
+
+  recordSyncEvent(type, detail = '') {
+    this.syncEvents.push({ type, detail, at: new Date().toISOString() });
+    if (this.syncEvents.length > 30) this.syncEvents.shift();
+  }
+
+  ensureAudioClock() {
+    if (this.audioContext || typeof AudioContext === 'undefined') return;
+    try {
+      this.audioContext = new AudioContext();
+      this.audioSource = this.audioContext.createMediaElementSource(this.video);
+      this.audioSource.connect(this.audioContext.destination);
+      this.recordSyncEvent('audio-clock-ready');
+    } catch (error) {
+      this.recordSyncEvent('audio-clock-unavailable', error?.message || String(error));
+    }
+  }
+
+  sampleSync() {
+    const v = this.video;
+    if (!this.audioContext || v.paused || v.readyState < 2) return;
+    if (this.audioContext.state === 'suspended') this.audioContext.resume().catch(() => {});
+    const now = this.audioContext.currentTime;
+    if (!this.audioClockAnchor) {
+      this.audioClockAnchor = { audio: now, media: v.currentTime };
+      this.syncStatus = 'normal';
+      return;
+    }
+    const offset = v.currentTime - (this.audioClockAnchor.media + now - this.audioClockAnchor.audio);
+    this.syncOffsetSeconds = Number.isFinite(offset) ? offset : null;
+    this.syncSamples++;
+    const magnitude = Math.abs(offset);
+    this.syncStatus = magnitude >= SYNC_WARN_SECONDS ? (offset > 0 ? 'audio-leading' : 'video-leading') : 'normal';
+    if (magnitude >= SYNC_WARN_SECONDS) {
+      if (!this.syncAnomalySince) this.syncAnomalySince = Date.now();
+      if (Date.now() - this.syncAnomalySince > 1000) this.recordSyncEvent('sync-anomaly', `${offset.toFixed(3)}s`);
+      if (magnitude >= SYNC_HARD_SECONDS && Date.now() - this.syncCorrectionAt > 15000) {
+        if (this.alignRecoveredMedia()) {
+          this.syncCorrectionAt = Date.now();
+          this.recordSyncEvent('sync-correction', '追到共同缓冲尾部');
+        }
+      }
+    } else this.syncAnomalySince = 0;
+  }
+
+  startSyncMonitor() {
+    clearInterval(this.syncTimer);
+    this.syncTimer = setInterval(() => this.sampleSync(), SYNC_OBSERVE_MS);
   }
 
   startFrameMonitor() {
@@ -470,6 +536,12 @@ export class Player {
     this.emit(state, message);
   }
 
+  enableAudioClock() {
+    this.ensureAudioClock();
+    if (this.audioContext?.state === 'suspended') this.audioContext.resume().catch(() => {});
+    this.startSyncMonitor();
+  }
+
   diagnostics() {
     const quality = this.video.getVideoPlaybackQuality?.();
     const bufferSeconds = this.liveLatency();
@@ -492,6 +564,10 @@ export class Player {
       totalFrames: quality?.totalVideoFrames || 0,
       droppedFrames: quality?.droppedVideoFrames || 0,
       currentTime: this.video.currentTime || 0,
+      syncStatus: this.audioContext ? this.syncStatus : 'unmeasurable',
+      syncOffsetSeconds: this.syncOffsetSeconds,
+      syncSamples: this.syncSamples,
+      syncEvents: this.syncEvents.slice(-8),
     };
   }
 
@@ -502,6 +578,9 @@ export class Player {
     this.pendingAlignment = false;
     this.resetFrameSamples();
     clearInterval(this.watchdog);
+    clearInterval(this.syncTimer);
+    this.syncTimer = 0;
+    this.audioClockAnchor = null;
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
     this.loadController?.abort();
@@ -535,5 +614,9 @@ export class Player {
     this.destroyed = true;
     this.generation++;
     this.teardown();
+    this.audioSource?.disconnect();
+    this.audioContext?.close().catch(() => {});
+    this.audioSource = null;
+    this.audioContext = null;
   }
 }

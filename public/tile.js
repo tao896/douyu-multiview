@@ -468,6 +468,7 @@ export class Tile {
     this.$.mute.classList.toggle('on', !this.s.muted);
     this.$.mute.setAttribute('aria-pressed', String(!this.s.muted));
     this.el.classList.toggle('audio-active', audioActive);
+    if (audioActive) this.player.enableAudioClock();
   }
 
   setMuted(muted) {
