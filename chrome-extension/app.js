@@ -567,12 +567,11 @@ function moveRoom(room, delta) {
   applyRoomOrder(reorderRooms(rooms, room, target, delta < 0 ? 'before' : 'after'));
 }
 
-// 排序后同时更新侧栏、已打开的窗口顺序并持久化。
+// 侧栏顺序独立于播放窗口顺序，只更新房间列表并持久化。
 function applyRoomOrder(next) {
   if (next.length !== rooms.length || next.every((room, index) => rooms[index] === room)) return;
   rooms.splice(0, rooms.length, ...next);
   syncRoomListOrder();
-  syncOpenTilesToRoomOrder();
   save();
 }
 
@@ -716,14 +715,6 @@ document.addEventListener('click', (event) => {
 document.addEventListener('pointermove', onRoomDragMove, { passive: false });
 document.addEventListener('pointerup', onRoomDragEnd);
 document.addEventListener('pointercancel', () => endRoomDrag({ commit: false }));
-
-function syncOpenTilesToRoomOrder() {
-  const desired = rooms.map(getOpenTile).filter(Boolean);
-  if (desired.length !== tiles.length || desired.every((tile, index) => tiles[index] === tile)) return;
-  tiles.splice(0, tiles.length, ...desired);
-  tiles.forEach((tile) => grid.appendChild(tile.el));
-  tiles.forEach((tile) => tile.resume());
-}
 
 function copyTileSettingsToRoom(tile, room) {
   // 提醒由侧栏管理；播放器持有创建时的副本，不能反向覆盖新的开关值。

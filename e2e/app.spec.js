@@ -414,7 +414,7 @@ test('focus layout uses a 2x2 hero with right and bottom slots, and toolbar can 
   await expect(page.locator('#topToolbar')).toBeVisible();
 });
 
-test('drags sidebar rooms to reorder, syncs open tiles and persists after reload', async ({ page }) => {
+test('reorders sidebar rooms independently of open tiles and persists after reload', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
   await page.getByRole('textbox', { name: '添加直播间' }).fill('301 302 303 304');
@@ -423,7 +423,7 @@ test('drags sidebar rooms to reorder, syncs open tiles and persists after reload
   await expect(rows).toHaveCount(4);
   expect(await roomRids(page)).toEqual(['301', '302', '303', '304']);
 
-  // 打开全部窗口，验证侧栏排序会同步到画面顺序
+  // 打开全部窗口，验证侧栏排序不会改变画面顺序
   await page.getByRole('button', { name: '批量' }).click();
   await page.getByRole('button', { name: '选择已开播' }).click();
   await page.getByRole('button', { name: '打开所选' }).click();
@@ -436,14 +436,20 @@ test('drags sidebar rooms to reorder, syncs open tiles and persists after reload
   await dragRoomRow(page, rows.first(), rows.last());
   await expect.poll(() => roomRids(page)).toEqual(['302', '303', '304', '301']);
   expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
-    .toEqual(['302', '303', '304', '301']);
+    .toEqual(['301', '302', '303', '304']);
 
   // 把末行拖回最前
   await dragRoomRow(page, page.locator('#roomList .room-row').last(), page.locator('#roomList .room-row').first(), { position: 'before' });
   await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303', '304']);
 
+  // 键盘排序同样不应改变窗口顺序，刷新后分别恢复两套顺序。
+  await rows.first().locator('[data-side-drag]').press('ArrowDown');
+  await expect.poll(() => roomRids(page)).toEqual(['302', '301', '303', '304']);
+  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
+    .toEqual(['301', '302', '303', '304']);
+
   await page.reload();
-  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303', '304']);
+  await expect.poll(() => roomRids(page)).toEqual(['302', '301', '303', '304']);
   expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
     .toEqual(['301', '302', '303', '304']);
 });
