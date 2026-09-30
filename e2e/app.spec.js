@@ -182,27 +182,45 @@ test('reconnects after Early-EOF, escalates persistent buffering and closes toda
   await expect(dialog).toBeHidden();
 });
 
-test('rebuilds the stream after returning from a long hidden page', async ({ page }) => {
-  const counts = await mockApplication(page);
-  await page.goto('/');
-  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
-  await page.getByRole('button', { name: '添加' }).click();
-  await expect(page.locator('article.tile')).toBeVisible();
-  const streamCount = counts.stream;
-
-  await page.evaluate(() => {
-    let now = Date.now();
-    Date.now = () => now;
-    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-    document.dispatchEvent(new Event('visibilitychange'));
-    now += 10_001;
-    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
-    document.dispatchEvent(new Event('visibilitychange'));
+for (const bufferedEnd of [2, 12]) {
+  test(`keeps the stream and audio settings after backgrounding with buffer ${bufferedEnd}s`, async ({ page }) => {
+    const counts = await mockApplication(page);
+    await page.goto('/');
+    await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+    await page.getByRole('button', { name: '添加' }).click();
+    await expect(page.getByText('直播中', { exact: true })).toBeVisible();
+    const streamCount = counts.stream;
+    const before = await page.evaluate(() => window.__mpegtsPlayers.length);
+    await page.evaluate((end) => {
+      const video = document.querySelector('video');
+      window.__originalVideo = video;
+      video.volume = 0.37;
+      video.muted = false;
+      video.currentTime = 1;
+      Object.defineProperty(video, 'readyState', { configurable: true, get: () => 4 });
+      Object.defineProperty(video, 'buffered', {
+        configurable: true, get: () => ({ length: 1, start: () => 0, end: () => end }),
+      });
+      let now = Date.now();
+      Date.now = () => now;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      now += 300_000;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, bufferedEnd);
+    await expect.poll(() => page.locator('video').evaluate(v => v.currentTime)).toBe(bufferedEnd === 12 ? 11 : 1);
+    expect(await page.evaluate(() => ({
+      sameVideo: document.querySelector('video') === window.__originalVideo,
+      players: window.__mpegtsPlayers.length,
+      volume: document.querySelector('video').volume,
+      muted: document.querySelector('video').muted,
+      paused: document.querySelector('video').paused,
+    }))).toEqual({ sameVideo: true, players: before, volume: 0.37, muted: false, paused: false });
+    expect(counts.stream).toBe(streamCount);
+    await expect(page.getByText('直播中', { exact: true })).toBeVisible();
   });
-
-  await expect.poll(() => counts.stream, { timeout: 5_000 }).toBeGreaterThan(streamCount);
-  await expect(page.getByText('直播中', { exact: true })).toBeVisible();
-});
+}
 
 test('sound-enabled tile has a green border and only title text is linked', async ({ page }) => {
   await mockApplication(page);

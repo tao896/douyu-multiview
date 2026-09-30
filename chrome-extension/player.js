@@ -7,7 +7,6 @@ const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
-const PAGE_RESYNC_MS = 10_000;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
@@ -438,27 +437,21 @@ export class Player {
       return;
     }
 
-    const hiddenFor = this.pageHiddenAt > 0 ? Math.max(0, Date.now() - this.pageHiddenAt) : 0;
     this.pageVisible = true;
     this.pageHiddenAt = 0;
     this.resetFrameSamples();
-    if (!this.mp) return;
-
-    // 后台标签页可能继续向 MSE 音频轨追加旧数据。停留较久后直接重建，
-    // 让新的音频和视频从同一个直播时间基准开始，避免只 seek 视频轨仍然错位。
-    const inPictureInPicture = document.pictureInPictureElement === this.video;
-    if (hiddenFor >= PAGE_RESYNC_MS && !inPictureInPicture && this.online) {
-      this.visibilityRecoveryCount++;
-      this.lastVisibilityRecoveryAt = Date.now();
-      this.lastVisibilityRecoveryReason = `页面后台 ${Math.round(hiddenFor / 1000)}s 后重建播放器`;
-      this.retry = 0;
-      this.retryForce = false;
-      clearTimeout(this.retryTimer);
-      this.retryTimer = 0;
-      this.load();
-      return;
+    if (!this.mp || this.retryTimer || this.waitingForOnline) return;
+    if (this.video.paused && this.video.readyState >= 2) {
+      this.video.play().catch(() => {});
     }
-
+    // 切回页面时优先复用现有流；若后台期间缓冲积压，则让音视频一起追到尾部。
+    if (this.liveLatency() > STALE_LATENCY_SECONDS) {
+      if (this.alignRecoveredMedia()) {
+        this.visibilityRecoveryCount++;
+        this.lastVisibilityRecoveryAt = Date.now();
+        this.lastVisibilityRecoveryReason = '切回页面后追到最新缓冲位置';
+      }
+    }
     this.lastTime = this.video.currentTime;
     this.lastMove = Date.now();
     this.startWatchdog();

@@ -1330,8 +1330,10 @@ function scheduleEco(tile) {
   if (!tile || !tiles.includes(tile)) return;
   clearTimeout(ecoTimers.get(tile));
   ecoTimers.delete(tile);
+  // 后台维持现有连接，节能仅处理前台视口外的窗口。
+  if (document.hidden) return;
   const protectedTile = !tile.s.muted || tile === soloTile || tile.isPictureInPicture();
-  const shouldSuspend = ecoModeEnabled() && !protectedTile && (document.hidden || !tile.visible);
+  const shouldSuspend = ecoModeEnabled() && !protectedTile && (!document.hidden && !tile.visible);
   if (!shouldSuspend) {
     tile.resumeFromEco();
     return;
@@ -1340,7 +1342,7 @@ function scheduleEco(tile) {
   const timer = setTimeout(() => {
     ecoTimers.delete(tile);
     const stillProtected = !tile.s.muted || tile === soloTile || tile.isPictureInPicture();
-    if (ecoModeEnabled() && !stillProtected && (document.hidden || !tile.visible)) tile.suspendForEco();
+    if (ecoModeEnabled() && !stillProtected && (!document.hidden && !tile.visible)) tile.suspendForEco();
   }, 30_000);
   ecoTimers.set(tile, timer);
 }
@@ -1485,7 +1487,7 @@ function renderDiagnostics() {
       `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
       `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
       item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
-      item.visibilityRecoveryCount ? `切页重建 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页重建',
+      item.visibilityRecoveryCount ? `切页追帧 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页追帧',
       item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
     ];
     values.forEach((value, index) => {
