@@ -725,3 +725,57 @@ test('daily statistics watermark matches attachment and survives reconnect', asy
   await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
   for (const watermark of await stats.all()) await expect(watermark).toBeHidden();
 });
+
+
+test('keyboard activity does not pin focused tile controls', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('601');
+  await page.getByRole('button', { name: '添加' }).click();
+  const tile = page.locator('article.tile').first();
+  await revealTileControls(tile);
+  const range = tile.locator('input[type="range"]').first();
+  await range.click();
+  for (const key of ['Meta', 'ArrowLeft', 'Tab']) {
+    await page.keyboard.press(key);
+    await expect(tile).toHaveClass(/controls-visible/);
+    await expect(tile).not.toHaveClass(/controls-visible/, { timeout: 4_000 });
+  }
+});
+
+for (const failure of ['mse', 'decode']) {
+  test(`reconnects after ${failure} failure despite healthy buffered playback`, async ({ page }) => {
+    const counts = await mockApplication(page);
+    await page.goto('/');
+    await page.getByRole('textbox', { name: '添加直播间' }).fill('601');
+    await page.getByRole('button', { name: '添加' }).click();
+    await expect(page.locator('video')).toBeVisible();
+    await page.evaluate((failure) => {
+      const video = document.querySelector('video');
+      Object.defineProperty(video, 'readyState', { configurable: true, get: () => 4 });
+      if (failure === 'mse') {
+        window.__mpegtsPlayers[0].emit('error', 'MediaError', 'MediaMSEError');
+      } else {
+        Object.defineProperty(video, 'error', { configurable: true, value: { code: 3, message: 'Decode failed' } });
+        video.dispatchEvent(new Event('error'));
+      }
+      video.dispatchEvent(new Event('timeupdate'));
+    }, failure);
+    await expect.poll(() => counts.stream, { timeout: 5_000 }).toBe(1);
+  });
+}
+
+test('filters known SourceBuffer event diagnostics but preserves unrelated errors', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('601');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect.poll(() => page.evaluate(() => window.__mpegtsPlayers?.length || 0)).toBe(1);
+  const errors = [];
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.evaluate(() => {
+    console.error('[MSEController] > SourceBuffer Error: [object Event]');
+    console.error('unrelated diagnostic');
+  });
+  expect(errors).toEqual(['unrelated diagnostic']);
+});

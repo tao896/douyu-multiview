@@ -16,10 +16,9 @@ const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap
 const STARTUP_STALL_WARNING = /^\[StartupStallJumper\] > Playback seems stuck at \d+(?:\.\d+)?, seek to \d+(?:\.\d+)?$/;
 const EARLY_EOF_WARNING = /(?:Fetch stream meet Early-EOF|UnrecoverableEarlyEof)/i;
 const UNCONSUMED_DATA_WARNING = /^\[IOController\] > \d+ bytes unconsumed data remain when flush buffer, dropped$/;
-// Chrome reports a SourceBuffer error after a decoder rejects one malformed
-// segment. mpegts.js emits the same condition through its ERROR event and the
-// player already performs the retry, so avoid duplicating it as an uncaught
-// console error (which otherwise obscures the actual recovery state).
+// SourceBuffer 的异步 error 在 mpegts 1.8.2 中仅记录日志；可恢复事件由看门狗
+// 观察，真正的媒体解码失败由 video.error 和 MediaMSEError 强制重建播放器。
+const SOURCE_BUFFER_EVENT_ERROR = /^\[MSEController\] > SourceBuffer Error: \[object Event\]$/;
 const SOURCE_BUFFER_APPEND_ERROR = /^\[MSEController\] > Failed to execute 'appendBuffer' on 'SourceBuffer':/;
 // 流地址过期或 CDN 切换时，mpegts 会先输出 404，再由播放器重新签名重连。
 // 这属于已处理的瞬态事件，避免 Chrome 控制台显示为未捕获错误。
@@ -35,7 +34,7 @@ function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
     || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
-    || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message);
+    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message);
 }
 
 function isEarlyEofError(type, detail) {
@@ -93,6 +92,11 @@ export class Player {
       }
     };
     video.addEventListener('playing', this.onPlaying);
+    this.onMediaError = () => {
+      if (!this.mp || this.destroyed || !video.error) return;
+      this.fail(`媒体播放失败 (${video.error.code})${video.error.message ? ': ' + video.error.message : ''}`, { force: true });
+    };
+    video.addEventListener('error', this.onMediaError);
     // playing 只在「暂停→播放」时触发。画面没停过、只是抛了个非致命错误的场景收不到它，
     // timeupdate 只说明媒体时钟推进；视频呈现异常由独立帧采样处理。
     this.onTimeUpdate = () => {
@@ -187,7 +191,7 @@ export class Player {
         const httpFailure = detail === 'HttpStatusCodeInvalid';
         const status = httpFailure && info?.code ? ` (HTTP ${info.code})` : '';
         this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
-          force: httpFailure || isEarlyEofError(type, detail),
+          force: httpFailure || detail === 'MediaMSEError' || isEarlyEofError(type, detail),
         });
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
@@ -530,6 +534,7 @@ export class Player {
 
   destroy() {
     this.video.removeEventListener('playing', this.onPlaying);
+    this.video.removeEventListener('error', this.onMediaError);
     this.video.removeEventListener('timeupdate', this.onTimeUpdate);
     this.video.removeEventListener('seeking', this.onSeeking);
     this.video.removeEventListener('progress', this.onProgress);

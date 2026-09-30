@@ -62,7 +62,6 @@ export class Tile {
     this.controlsTimer = 0;
     this.controlsVisible = false;
     this.pointerPressed = false;
-    this.keyboardMode = false;
     this.controlsAbort = null;
 
     this.el = tpl.content.firstElementChild.cloneNode(true);
@@ -189,7 +188,6 @@ export class Tile {
     this.el.addEventListener('mouseleave', () => this.hideControls(), { signal });
     this.el.addEventListener('pointerdown', () => {
       this.pointerPressed = true;
-      this.keyboardMode = false;
       this.showControls();
     }, { passive: true, signal });
     this.el.addEventListener('pointerup', () => {
@@ -200,7 +198,6 @@ export class Tile {
     this.el.addEventListener('input', () => this.keepControlsVisible(), { signal });
     this.el.addEventListener('change', () => this.keepControlsVisible(), { signal });
     this.el.addEventListener('keydown', () => {
-      this.keyboardMode = true;
       this.showControls();
     }, { signal });
     this.el.addEventListener('focusout', () => this.scheduleControlsHide(), { signal });
@@ -228,12 +225,12 @@ export class Tile {
     this.el.classList.remove('controls-visible');
   }
 
-  // 每次操作都重新计时；按住指针或键盘操作控件期间继续续期。
+  // 每次操作都重新计时；按住指针期间继续续期，键盘仅由实际按键续期。
   keepControlsVisible() {
     clearTimeout(this.controlsTimer);
     this.controlsTimer = setTimeout(() => {
       this.controlsTimer = 0;
-      if (this.pointerPressed || (this.keyboardMode && this.el.contains(document.activeElement))) {
+      if (this.pointerPressed) {
         this.keepControlsVisible();
         return;
       }
