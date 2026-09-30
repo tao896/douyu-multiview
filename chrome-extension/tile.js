@@ -75,7 +75,6 @@ export class Tile {
       watermark: q('[data-watermark]'),
       stats: q('[data-stats]'),
       watermarkNoble: q('[data-watermark-noble]'),
-      watermarkFish: q('[data-watermark-fish]'),
       rid: q('[data-rid]'),
       status: q('[data-status]'),
       video: q('[data-video]'),
@@ -99,8 +98,7 @@ export class Tile {
     this.$.nickname.textContent = this.s.nickname || '';
     this.$.watermark.textContent = this.s.nickname || '';
     this.$.watermark.hidden = !this.s.nickname?.trim();
-    this.stats = { noble: null, fishValue: null };
-    this.statsTimer = setInterval(() => this.loadGiftValue(), 10_000);
+    this.stats = { noble: null };
     this.renderStats();
     this.$.rid.textContent = `房间 ${this.s.rid}`;
     if (this.s.avatar) this.$.avatar.src = this.s.avatar;
@@ -288,7 +286,6 @@ export class Tile {
   }
 
   updateRoomInfo(info) {
-    const previousRid = this.s.rid;
     let changed = false;
     for (const key of ['rid', 'title', 'nickname', 'avatar']) {
       const next = String(info[key] || '');
@@ -298,13 +295,6 @@ export class Tile {
       }
     }
 
-    if (previousRid !== this.s.rid) {
-      this.giftController?.abort();
-      this.giftController = null;
-      this.stats.fishValue = null;
-      this.renderStats();
-    }
-    this.loadGiftValue();
     this.el.dataset.rid = this.s.rid;
     this.updateTitleLink(this.s.title || `房间 ${this.s.rid}`);
     this.$.nickname.textContent = this.s.nickname || '';
@@ -386,7 +376,6 @@ export class Tile {
         if (e.type === 'open' || e.type === 'close') {
           this.stats.noble = null;
           this.renderStats();
-          if (e.type === 'open') this.loadGiftValue();
         }
         if (e.type !== 'live') return;
         const changed = this.setRoomLive(e.live);
@@ -398,26 +387,8 @@ export class Tile {
     this.dm.connect();
   }
 
-  async loadGiftValue() {
-    if (this.destroyed || this.ecoSuspended || this.giftController) return;
-    const rid = this.s.rid;
-    const controller = this.giftController = new AbortController();
-    try {
-      const result = await fetchJson(`/api/room-gift-value?rid=${rid}`, { signal: controller.signal });
-      if (this.destroyed || controller.signal.aborted || rid !== this.s.rid) return;
-      this.stats.fishValue = typeof result?.fishValue === 'string' ? result.fishValue : null;
-    } catch {
-      if (this.destroyed || controller.signal.aborted || rid !== this.s.rid) return;
-      this.stats.fishValue = null;
-    } finally {
-      if (this.giftController === controller) this.giftController = null;
-    }
-    this.renderStats();
-  }
-
   renderStats() {
     this.$.watermarkNoble.textContent = `贵宾数：${this.stats.noble ?? '--'}`;
-    this.$.watermarkFish.textContent = `鱼翅：${this.stats.fishValue ?? '--'}`;
   }
 
   handleDanmaku(chat) {
@@ -593,7 +564,6 @@ export class Tile {
     this.player.setExternalState('suspended', '已节能暂停');
     this.dm?.close();
     this.dm = null;
-    this.giftController?.abort();
     this.stats.noble = null;
     this.renderStats();
     this.renderer.setActive(false);
@@ -653,8 +623,6 @@ export class Tile {
 
   destroy() {
     this.destroyed = true;
-    clearInterval(this.statsTimer);
-    this.giftController?.abort();
     this.loadSeq++;
     this.loadController?.abort();
     clearTimeout(this.controlsTimer);
