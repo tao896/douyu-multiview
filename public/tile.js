@@ -79,6 +79,7 @@ export class Tile {
       status: q('[data-status]'),
       video: q('[data-video]'),
       canvas: q('[data-danmaku]'),
+      giftLog: q('[data-gift-log]'),
       overlay: q('[data-overlay]'),
       overlayMsg: q('[data-overlay-msg]'),
       retryBtn: q('[data-retry-btn]'),
@@ -93,12 +94,17 @@ export class Tile {
       focus: q('[data-act="focus"]'),
       pip: q('[data-act="pip"]'),
       aggregate: q('[data-act="aggregate"]'),
+      gift: q('[data-act="gift"]'),
+      chatInput: q('[data-chat-input]'),
     };
     this.updateTitleLink(this.s.title || '加载中…');
     this.$.nickname.textContent = this.s.nickname || '';
     this.$.watermark.textContent = this.s.nickname || '';
     this.$.watermark.hidden = !this.s.nickname?.trim();
     this.stats = { noble: null };
+    this.gifts = [];
+    this.giftsEnabled = true;
+    this.giftNameFilter = [];
     this.renderStats();
     this.$.rid.textContent = `房间 ${this.s.rid}`;
     if (this.s.avatar) this.$.avatar.src = this.s.avatar;
@@ -145,6 +151,7 @@ export class Tile {
         danmaku: () => this.setDanmaku(!this.s.danmaku),
         solo: () => this.onSolo(this),
         aggregate: () => this.onAggregate(this),
+        gift: () => this.setGiftsEnabled(!this.giftsEnabled),
         focus: () => this.onFocus(this),
         data: () => this.onData(this),
         pip: () => this.togglePictureInPicture(),
@@ -155,6 +162,14 @@ export class Tile {
     });
 
     this.$.vol.addEventListener('input', () => this.setVolume(Number(this.$.vol.value)));
+    this.$.chatInput?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        const value = event.currentTarget.value.trim();
+        if (!value) return;
+        if (this.sendChat(value)) event.currentTarget.value = '';
+      }
+    });
     this.$.opacity.addEventListener('input', () => this.setOpacity(Number(this.$.opacity.value) / 100));
     this.$.rate.addEventListener('change', () => this.setRate(Number(this.$.rate.value)));
     // 点画面：没在播就起播，否则切静音（多窗口下最顺手的操作）
@@ -368,6 +383,7 @@ export class Tile {
     if (this.dm) return;
     this.dm = new DanmakuClient(this.s.rid, {
       onChat: (c) => { if (this.danmakuFilter.accept(c.text)) this.handleDanmaku(c); },
+      onGift: (gift) => this.handleGift(gift),
       onStats: (stat) => {
         if (stat.type === 'noble') this.stats.noble = stat.value;
         if (stat.type === 'noble') this.renderStats();
@@ -393,6 +409,44 @@ export class Tile {
 
   handleDanmaku(chat) {
     this.onDanmaku(this, chat);
+  }
+
+  handleGift(gift) {
+    // 某些斗鱼礼物帧不携带价值字段；此时保留记录，避免整类礼物被误过滤。
+    if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
+    this.gifts.push(gift);
+    if (this.gifts.length > 50) this.gifts.splice(0, this.gifts.length - 50);
+    this.renderGifts();
+    clearTimeout(this.giftHideTimer);
+    this.giftHideTimer = setTimeout(() => {
+      if (this.$.giftLog) this.$.giftLog.hidden = true;
+    }, 5000);
+  }
+
+  renderGifts() {
+    if (!this.$.giftLog) return;
+    this.$.giftLog.replaceChildren(...this.gifts.slice(-8).reverse().map((gift) => {
+      const row = document.createElement('div');
+      row.textContent = `${gift.user || '匿名用户'} 送出 ${gift.giftName || '礼物'} ×${gift.count || 1}`;
+      return row;
+    }));
+    this.$.giftLog.hidden = !this.giftsEnabled || this.gifts.length === 0;
+    this.$.gift?.classList.toggle('on', this.giftsEnabled);
+  }
+
+  setGiftsEnabled(enabled) {
+    this.giftsEnabled = !!enabled;
+    this.renderGifts();
+  }
+
+  setGiftNameFilter(value) {
+    this.giftNameFilter = String(value || '').split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+  }
+
+  sendChat(text) {
+    const sent = this.dm?.sendChat(text) || false;
+    if (sent) this.pushDanmaku(`我：${text}`, 0);
+    return sent;
   }
 
   pushDanmaku(text, color) {
@@ -627,6 +681,7 @@ export class Tile {
     this.loadSeq++;
     this.loadController?.abort();
     clearTimeout(this.controlsTimer);
+    clearTimeout(this.giftHideTimer);
     this.controlsTimer = 0;
     this.controlsAbort?.abort();
     this.controlsAbort = null;

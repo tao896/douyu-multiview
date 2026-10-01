@@ -29,6 +29,12 @@ function serializeError(error) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'douyu-auth-status') {
+    chrome.cookies.get({ url: 'https://www.douyu.com/', name: 'acf_did' }, (cookie) => {
+      sendResponse({ loggedIn: !!cookie });
+    });
+    return true;
+  }
   if (message?.type === 'douyu-sync-reminders') { chrome.storage.local.set({ [STORE]: message.rooms || {} }).then(() => checkReminders()); return; }
   if (message?.type === 'douyu-api') {
     handleApiPath(message.path)

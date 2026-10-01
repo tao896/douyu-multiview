@@ -100,6 +100,8 @@ let diagnosticsTimer = 0;
 let pendingImport = null;
 let hideOfflineWindows = false;
 let preferredFocusRid = '';
+let giftsEnabled = true;
+let giftNameFilter = '';
 const roomDataDialog = new RoomDataDialog($('roomDataDialog'));
 
 function readStored(key) {
@@ -115,6 +117,8 @@ const appState = normalizeAppState(
   readStored(STORAGE_KEY_V2),
   readStored(STORAGE_KEY_V1)
 );
+
+giftNameFilter = appState.workspaces.find((item) => item.id === appState.activeWorkspaceId)?.giftNameFilter || '';
 
 function activeWorkspace() {
   return appState.workspaces.find((item) => item.id === appState.activeWorkspaceId) || appState.workspaces[0];
@@ -770,6 +774,8 @@ function openRoom(room, { persist = true } = {}) {
   tiles.push(tile);
   tileRooms.set(tile, room);
   tile.setDanmakuSpeed(Number($('danmakuSpeedSelect').value) || 1);
+  tile.setGiftsEnabled(giftsEnabled);
+  tile.setGiftNameFilter(giftNameFilter);
   copyTileSettingsToRoom(tile, room);
   grid.appendChild(tile.el);
   makeDraggable(tile);
@@ -1162,6 +1168,86 @@ $('addInput').addEventListener('keydown', (event) => {
     event.preventDefault();
     $('addForm').requestSubmit();
   }
+});
+
+// 礼物记录全局开关（记录仍保留在窗口内存中）
+$('giftAllBtn')?.addEventListener('click', () => {
+  giftsEnabled = !giftsEnabled;
+  tiles.forEach((tile) => tile.setGiftsEnabled(giftsEnabled));
+  const button = $('giftAllBtn');
+  button.setAttribute('aria-pressed', String(giftsEnabled));
+  button.setAttribute('aria-label', giftsEnabled ? '礼物记录全关' : '礼物记录全开');
+  button.dataset.tooltip = giftsEnabled ? '礼物记录全关' : '礼物记录全开';
+});
+$('giftNameFilter')?.addEventListener('input', (event) => {
+  giftNameFilter = event.target.value;
+});
+$('giftFilterBtn')?.addEventListener('click', () => {
+  $('giftNameFilter').value = giftNameFilter;
+  $('giftFilterDialog').showModal();
+});
+$('giftFilterForm')?.addEventListener('submit', (event) => {
+  if (event.submitter?.value === 'cancel') return;
+  giftNameFilter = $('giftNameFilter').value;
+  activeWorkspace().giftNameFilter = giftNameFilter;
+  tiles.forEach((tile) => tile.setGiftNameFilter(giftNameFilter));
+  save({ immediate: true });
+});
+
+// 斗鱼登录只打开官方页面，不在本应用收集密码。
+$('douyuLoginBtn')?.addEventListener('click', () => {
+  window.open('https://www.douyu.com/', '_blank', 'noopener,noreferrer');
+  toast('请在斗鱼页面完成登录后返回发送弹幕');
+});
+async function refreshDouyuAuthStatus() {
+  const button = $('douyuLoginBtn');
+  if (!button) return;
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.sendMessage) {
+    button.dataset.tooltip = '登录状态未知';
+    return;
+  }
+  try {
+    const result = await new Promise((resolve) => runtime.sendMessage({ type: 'douyu-auth-status' }, resolve));
+    button.dataset.tooltip = result?.loggedIn ? '斗鱼已登录' : '点击打开斗鱼登录页';
+    button.setAttribute('aria-label', result?.loggedIn ? '斗鱼已登录' : '斗鱼未登录');
+  } catch { button.dataset.tooltip = '登录状态未知'; }
+}
+refreshDouyuAuthStatus();
+
+// 长按 Ctrl 呼出快速打开框。
+let ctrlTimer = 0;
+const quickSearch = $('quickSearch');
+const quickInput = $('quickSearchInput');
+function closeQuickSearch() {
+  clearTimeout(ctrlTimer); ctrlTimer = 0;
+  if (quickSearch) quickSearch.hidden = true;
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Control' || event.repeat || event.metaKey) return;
+  if (isEditableTarget(event.target) || document.querySelector('dialog[open]')) return;
+  ctrlTimer = setTimeout(() => {
+    quickSearch.hidden = !quickSearch.hidden;
+    if (quickSearch.hidden) return;
+    quickInput.value = '';
+    $('quickSearchError').textContent = '';
+    quickInput.focus();
+  }, 300);
+});
+document.addEventListener('keyup', (event) => { if (event.key === 'Control') clearTimeout(ctrlTimer); });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && quickSearch && !quickSearch.hidden) closeQuickSearch();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (quickSearch && !quickSearch.hidden && !quickSearch.contains(event.target)) closeQuickSearch();
+});
+quickInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { closeQuickSearch(); return; }
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  $('addInput').value = quickInput.value;
+  closeQuickSearch();
+  $('addForm').requestSubmit();
 });
 
 // —— 搜索、筛选和批量操作 ——

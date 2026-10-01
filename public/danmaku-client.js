@@ -29,9 +29,10 @@ function parseFields(msg) {
 }
 
 export class DanmakuClient {
-  constructor(rid, { onChat, onStatus, onStats } = {}) {
+  constructor(rid, { onChat, onGift, onStatus, onStats } = {}) {
     this.rid = String(rid);
     this.onChat = onChat || (() => {});
+    this.onGift = onGift || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onStats = onStats || (() => {});
     this.ws = null;
@@ -121,6 +122,20 @@ export class DanmakuClient {
         color: Number(f.col) || 0,
         level: Number(f.level) || 0,
       });
+    } else if (type === 'dgb' || type === 'uenter') {
+      const f = parseFields(msg);
+      if (type === 'dgb') {
+        const count = Math.max(1, Number(f.gfc || f.gc || 1) || 1);
+        // 斗鱼不同房间/版本使用 gs、gbc、dhb、dms 等字段表示鱼翅价值。
+        const rawValue = Number(f.gbc || f.gs || f.dhb || f.dms || f.gift_score || f.score) || 0;
+        const unitValue = rawValue;
+        this.onGift({
+        user: unesc(f.nn || f.un || '匿名用户'),
+        giftName: unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gfid || '礼物'),
+        count,
+        value: unitValue * count,
+        });
+      }
     } else if (type === 'rss') {
       // 开播状态变化
       const f = parseFields(msg);
@@ -132,6 +147,18 @@ export class DanmakuClient {
     } else if (type === 'error') {
       this.onStatus({ type: 'error', msg: parseFields(msg).code || '' });
     }
+  }
+
+  sendChat(text) {
+    const value = String(text || '').trim();
+    if (!value || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.onStatus({ type: 'send-error', msg: '弹幕连接尚未建立' });
+      return false;
+    }
+    // 未登录连接会由斗鱼返回 error；登录态由浏览器/扩展提供。
+    const content = value.replace(/@/g, '@A').replace(/\//g, '@S');
+    this.ws.send(pack(`type@=chatmessage/receiver@=0/content@=${content}/scope@=1/ct@=1/`));
+    return true;
   }
 
   close() {

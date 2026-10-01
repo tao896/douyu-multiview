@@ -83,6 +83,10 @@
     <path d="M12 3a5.5 5.5 0 0 0-5.5 5.5v3.2L5 15.5h14l-1.5-3.8V8.5A5.5 5.5 0 0 0 12 3Z"/>
     <path d="M9.8 18.4a2.4 2.4 0 0 0 4.4 0"/>
   </symbol>
+  <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></symbol>
+  <symbol id="icon-user" viewBox="0 0 24 24">
+    <circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-4 3.3-6 7.5-6s6.7 2 7.5 6"/>
+  </symbol>
 </svg>
 
 <header class="bar" id="topToolbar">
@@ -188,6 +192,10 @@
       <svg class="toolbar-icon toolbar-icon-state-off" aria-hidden="true"><use href="#icon-danmaku-off"/></svg>
       <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-danmaku"/></svg>
     </button>
+    <button class="ghost toolbar-icon-btn" id="giftAllBtn" type="button" aria-pressed="true"
+            aria-label="礼物记录全关" data-tooltip="礼物记录全关">🎁</button>
+    <button class="ghost toolbar-icon-btn" id="giftFilterBtn" type="button" aria-label="过滤礼物" data-tooltip="过滤礼物"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-filter"/></svg></button>
+    <button class="ghost toolbar-icon-btn" id="douyuLoginBtn" type="button" aria-label="斗鱼登录" data-tooltip="打开斗鱼登录页"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-user"/></svg></button>
     <button class="ghost toolbar-icon-btn on" id="roomStatsBtn" type="button" aria-pressed="true"
             aria-label="隐藏统计水印" data-tooltip="隐藏统计水印">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-data"/></svg>
@@ -322,6 +330,7 @@
     <div class="stage" data-stage>
       <video data-video playsinline muted></video>
       <canvas class="danmaku" data-danmaku></canvas>
+      <div class="gift-log" data-gift-log hidden aria-live="polite"></div>
       <div class="room-watermark" data-watermark aria-hidden="true" hidden></div>
       <div class="room-watermark room-stats" data-stats aria-label="贵宾数">
         <span data-watermark-noble>贵宾数：--</span>
@@ -339,14 +348,21 @@
       <span class="vol-num" data-volnum>0</span>
 
       <button class="chip" data-act="danmaku" title="弹幕开关" aria-label="弹幕开关">弹幕</button>
+      <button class="chip" data-act="gift" title="礼物记录开关" aria-label="礼物记录开关">礼物</button>
       <input class="opa" type="range" min="20" max="100" step="5" data-opacity title="弹幕不透明度">
 
       <button class="chip solo" data-act="solo" title="只听这个直播间" aria-label="独听">独听</button>
       <select class="rate" data-rate title="清晰度"></select>
+      <input class="chat-input" data-chat-input placeholder="发送弹幕" aria-label="发送弹幕">
       <button class="icon" data-act="fullscreen" title="全屏">⛶</button>
     </div>
   </article>
 </template>
+
+<div class="quick-search" id="quickSearch" hidden role="dialog" aria-label="打开直播间">
+  <input id="quickSearchInput" aria-label="房间号或斗鱼链接" placeholder="输入房间号或斗鱼链接">
+  <span id="quickSearchError" role="status"></span>
+</div>
 
 <!-- 左侧直播间快捷入口 -->
 <template id="roomShortcutTpl">
@@ -497,6 +513,7 @@
     <div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" id="danmakuSettingsSave" value="default">保存</button></div>
   </form>
 </dialog>
+<dialog class="modal" id="giftFilterDialog" aria-labelledby="giftFilterTitle"><form method="dialog" id="giftFilterForm"><h2 id="giftFilterTitle">过滤礼物</h2><label class="modal-field">要隐藏的礼物名称（逗号或换行分隔）<textarea id="giftNameFilter" rows="5" placeholder="鱼丸\n火箭"></textarea></label><div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" value="default">保存</button></div></form></dialog>
 
 <script src="/vendor/mpegts.js"></script>
 <script type="module" src="/app.js"></script>
