@@ -7,7 +7,8 @@ const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
-const SYNC_OBSERVE_MS = 250;
+const SYNC_OBSERVE_MS = 1000;
+const FRAME_SAMPLE_MS = 333;
 const SYNC_WARN_SECONDS = 0.2;
 const SYNC_HARD_SECONDS = 0.5;
 
@@ -307,7 +308,10 @@ export class Player {
     const epoch = ++this.frameEpoch;
     const sample = (_now, metadata) => {
       if (epoch !== this.frameEpoch || this.destroyed || !this.mp) return;
-      if (this.pageVisible && !this.video.seeking && !this.video.paused) {
+      const now = Date.now();
+      if (this.pageVisible && this.frameVisible && !this.video.seeking && !this.video.paused
+        && now - (this.lastFrameSampleAt || 0) >= FRAME_SAMPLE_MS) {
+        this.lastFrameSampleAt = now;
         if (metadata.mediaTime !== this.lastFrameMediaTime) this.lastFrameAt = Date.now();
         this.lastFrameMediaTime = metadata.mediaTime;
         // 这是呈现时间线偏差线索，并非音频输出时间戳或精确音画差。

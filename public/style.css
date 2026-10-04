@@ -800,6 +800,7 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   min-width: 0;
   scroll-margin-top: calc(var(--bar-height) + 12px);
   transition: border-color .18s ease, box-shadow .18s ease;
+  contain: layout paint;
 }
 .tile:hover,
 .tile:focus-within {
@@ -936,6 +937,7 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   aspect-ratio: 16 / 9;
   background: #000;
   overflow: hidden;
+  contain: layout paint;
 }
 
 .stage video {
@@ -944,6 +946,7 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   display: block;
   object-fit: contain;
   background: #000;
+  contain: paint;
 }
 
 .danmaku {
