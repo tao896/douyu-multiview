@@ -137,6 +137,8 @@ export class Tile {
     this.$.watermark.hidden = !this.s.nickname?.trim();
     this.stats = { noble: null };
     this.gifts = [];
+    this.giftRows = new Map();
+    this.giftExitTimers = new Map();
     this.giftsEnabled = true;
     this.giftNameFilter = [];
     this.renderStats();
@@ -456,11 +458,15 @@ export class Tile {
       this.gifts.unshift(item);
       resolveGiftImage(item, item.meta).then(() => { if (!this.destroyed) this.renderGifts(); });
     }
-    this.gifts = this.gifts.slice(0, 4);
+    while (this.gifts.length > 4) {
+      const expired = this.gifts.pop();
+      this.fadeGift(expired);
+    }
     this.renderGifts();
     clearTimeout(this.giftHideTimer);
     this.giftHideTimer = setTimeout(() => {
       const now = Date.now();
+      this.gifts.filter((item) => now - item.time >= 5000).forEach((item) => this.fadeGift(item));
       this.gifts = this.gifts.filter((item) => now - item.time < 5000);
       this.renderGifts();
       if (this.gifts.length) this.giftHideTimer = setTimeout(() => this.renderGifts(), 1000);
@@ -469,9 +475,24 @@ export class Tile {
 
   renderGifts() {
     if (!this.$.giftLog) return;
-    this.$.giftLog.replaceChildren(...this.gifts.map((gift) => {
-      const row = document.createElement('div');
-      row.className = 'gift-item';
+    if (!this.giftRows) this.giftRows = new Map();
+    const giftKey = (gift) => gift.key || `${gift.user || ''}|${gift.id || gift.giftName || ''}`;
+    const activeKeys = new Set(this.gifts.map(giftKey));
+    this.gifts.forEach((gift) => {
+      const key = giftKey(gift);
+      const exitTimer = this.giftExitTimers?.get(key);
+      if (exitTimer) {
+        clearTimeout(exitTimer);
+        this.giftExitTimers.delete(key);
+      }
+      let row = this.giftRows.get(key);
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'gift-item';
+        this.giftRows.set(key, row);
+      }
+      row.classList.remove('gift-item-exit');
+      if (!row.firstChild) {
       const avatar = document.createElement('img'); avatar.className = 'gift-avatar'; avatar.alt = ''; avatar.src = gift.avatar || this.s.avatar || FALLBACK_AVATAR;
       avatar.onerror = () => { avatar.onerror = null; avatar.src = FALLBACK_AVATAR; };
       const text = document.createElement('div'); text.className = 'gift-copy';
@@ -489,10 +510,29 @@ export class Tile {
       };
       const count = document.createElement('b'); count.className = 'gift-count'; count.textContent = `×${gift.count || 1}`;
       row.append(avatar, text, image, count);
-      return row;
-    }));
+      }
+      row.querySelector('.gift-count').textContent = `×${gift.count || 1}`;
+      this.$.giftLog.append(row);
+    });
+    [...this.giftRows].forEach(([key, row]) => {
+      if (!activeKeys.has(key) && !row.classList.contains('gift-item-exit')) row.remove();
+    });
     this.$.giftLog.hidden = !this.giftsEnabled || this.gifts.length === 0;
     this.$.gift?.classList.toggle('on', this.giftsEnabled);
+  }
+
+  fadeGift(gift) {
+    if (!gift?.key) return;
+    const row = this.giftRows?.get(gift.key);
+    if (!row) return;
+    row.classList.add('gift-item-exit');
+    clearTimeout(this.giftExitTimers?.get(gift.key));
+    if (!this.giftExitTimers) this.giftExitTimers = new Map();
+    this.giftExitTimers.set(gift.key, setTimeout(() => {
+      row.remove();
+      this.giftRows.delete(gift.key);
+      this.giftExitTimers.delete(gift.key);
+    }, 300));
   }
 
   setGiftsEnabled(enabled) {
@@ -743,6 +783,7 @@ export class Tile {
     this.loadController?.abort();
     clearTimeout(this.controlsTimer);
     clearTimeout(this.giftHideTimer);
+    this.giftExitTimers?.forEach((timer) => clearTimeout(timer));
     this.controlsTimer = 0;
     this.controlsAbort?.abort();
     this.controlsAbort = null;

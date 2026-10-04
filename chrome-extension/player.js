@@ -1,13 +1,18 @@
+import { LiveStreamLoader } from './live-stream-loader.js';
+
 // mpegts.js 封装：FLV 直播播放 + 卡死自愈
 // 流地址带 wsAuth token 会过期，出错或长时间不推进就重新签名换地址
 const STALL_MS = 15_000;
 const MAX_RETRY = 6;
+const STABLE_PLAYBACK_MS = 30_000;
+const MAX_FORWARD_BUFFER_SECONDS = 30;
 const STALE_LATENCY_SECONDS = 3;
 const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
-const SYNC_OBSERVE_MS = 250;
+const SYNC_OBSERVE_MS = 1000;
+const FRAME_SAMPLE_MS = 333;
 const SYNC_WARN_SECONDS = 0.2;
 const SYNC_HARD_SECONDS = 0.5;
 
@@ -18,6 +23,8 @@ const AUDIO_TIMESTAMP_GAP_WARNING = /^\[MP4Remuxer\] > Large audio timestamp gap
 const STARTUP_STALL_WARNING = /^\[StartupStallJumper\] > Playback seems stuck at \d+(?:\.\d+)?, seek to \d+(?:\.\d+)?$/;
 const EARLY_EOF_WARNING = /(?:Fetch stream meet Early-EOF|UnrecoverableEarlyEof)/i;
 const UNCONSUMED_DATA_WARNING = /^\[IOController\] > \d+ bytes unconsumed data remain when flush buffer, dropped$/;
+// mpegts.js 的正常初始化日志会在多路直播中高速累积，保留它们会让 DevTools 控制台本身持续占用内存。
+const ROUTINE_INFO_LOG = /^\[(?:MSEController|FLVDemuxer)\] > (?:MediaSource onSourceOpen|Parsed onMetaData|Parsed AudioSpecificConfig|Parsed AVCDecoderConfigurationRecord|Received Initialization Segment, mimeType:)/;
 // SourceBuffer 的异步 error 在 mpegts 1.8.2 中仅记录日志；可恢复事件由看门狗
 // 观察，真正的媒体解码失败由 video.error 和 MediaMSEError 强制重建播放器。
 const SOURCE_BUFFER_EVENT_ERROR = /^\[MSEController\] > SourceBuffer Error: \[object Event\]$/;
@@ -36,7 +43,7 @@ function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
     || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
-    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message);
+    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message) || ROUTINE_INFO_LOG.test(message);
 }
 
 function isEarlyEofError(type, detail) {
@@ -71,6 +78,7 @@ function configureLogging(mpegts) {
 const CONFIG = {
   // mpegts.js 的 Blob Worker 不符合当前扩展 CSP，保留主线程回退路径。
   enableWorker: false,
+  customLoader: LiveStreamLoader,
   // 应用层统一追帧，避免库和看门狗同时 seek。
   liveBufferLatencyChasing: false,
   lazyLoad: false,
@@ -104,8 +112,11 @@ export class Player {
     this.onTimeUpdate = () => {
       if (this.destroyed || !this.mp || this.video.paused) return;
       if (this.video.currentTime > this.lastTime + 0.05) {
+        const now = Date.now();
+        if (!this.stableSince || now - this.lastMove > STALL_MS) this.stableSince = now;
         this.lastTime = this.video.currentTime;
-        this.lastMove = Date.now();
+        this.lastMove = now;
+        if (!this.retryForce && now - this.stableSince >= STABLE_PLAYBACK_MS) this.retry = 0;
       }
       if (this.retryForce) return;
       this.state = 'playing';
@@ -119,6 +130,7 @@ export class Player {
     this.watchdog = 0;
     this.lastTime = 0;
     this.lastMove = 0;
+    this.stableSince = 0;
     this.staleLatencySamples = 0;
     this.destroyed = false;
     this.loading = false;
@@ -183,7 +195,7 @@ export class Player {
     this.emit('loading');
     try {
       const url = initialUrl || await this.getUrl({ signal: controller.signal });
-      if (this.destroyed || generation !== this.generation) return;
+      if (this.destroyed || generation !== this.generation || controller.signal.aborted) return;
       if (!window.mpegts?.isSupported()) throw new Error('当前浏览器不支持 MSE 播放');
 
       configureLogging(window.mpegts);
@@ -213,7 +225,6 @@ export class Player {
         if (this.mp !== mp) return;
         // 重连会复用同一个 video 元素；从新流的缓冲尾部重新建立音视频共同时间基准。
         if (recovering) this.onProgress();
-        this.retry = 0;
         this.lastTime = this.video.currentTime;
         this.lastMove = Date.now();
         this.emit('playing');
@@ -221,12 +232,15 @@ export class Player {
       });
 
       mp.load();
+      if (this.mp !== mp) return;
+      // play() 可能一直等待媒体数据，等待期间也要防止下载缓冲无限增长。
+      this.startWatchdog();
       // 自动播放策略：必须静音起播，音量由用户交互后再开
       let blocked = false;
       await mp.play().catch(() => {
         blocked = true;
       });
-      if (this.destroyed || generation !== this.generation) return;
+      if (this.destroyed || generation !== this.generation || controller.signal.aborted) return;
       // 即使 play() 没抛，也可能被策略拦下来停在 paused
       if (blocked || this.video.paused) this.emit('blocked');
       this.startWatchdog();
@@ -307,7 +321,10 @@ export class Player {
     const epoch = ++this.frameEpoch;
     const sample = (_now, metadata) => {
       if (epoch !== this.frameEpoch || this.destroyed || !this.mp) return;
-      if (this.pageVisible && !this.video.seeking && !this.video.paused) {
+      const now = Date.now();
+      if (this.pageVisible && this.frameVisible && !this.video.seeking && !this.video.paused
+        && now - (this.lastFrameSampleAt || 0) >= FRAME_SAMPLE_MS) {
+        this.lastFrameSampleAt = now;
         if (metadata.mediaTime !== this.lastFrameMediaTime) this.lastFrameAt = Date.now();
         this.lastFrameMediaTime = metadata.mediaTime;
         // 这是呈现时间线偏差线索，并非音频输出时间戳或精确音画差。
@@ -393,7 +410,12 @@ export class Player {
     this.lastTime = this.video.currentTime;
     this.lastMove = Date.now();
     this.watchdog = setInterval(() => {
-      if (this.destroyed) return;
+      if (this.destroyed || !this.mp) return;
+      // 后向清理无法释放尚未播放的内容；后台、暂停及解码卡死也必须检查。
+      if (this.liveLatency() > MAX_FORWARD_BUFFER_SECONDS) {
+        this.fail('未播放缓冲超过 30 秒，释放流后重连', { force: true });
+        return;
+      }
       if (!this.pageVisible) {
         this.lastTime = this.video.currentTime;
         this.lastMove = Date.now();
@@ -426,8 +448,10 @@ export class Player {
 
   fail(reason, { force = false } = {}) {
     if (this.destroyed) return;
+    this.stableSince = 0;
     if (!this.online) {
       this.waitingForOnline = true;
+      this.teardown();
       clearInterval(this.watchdog);
       clearTimeout(this.retryTimer);
       this.retryTimer = 0;
@@ -448,12 +472,15 @@ export class Player {
     }
     clearInterval(this.watchdog);
     if (this.retry >= MAX_RETRY) {
+      this.teardown();
       this.emit('error', `${reason}（已重试 ${this.retry} 次）`);
       return;
     }
     const baseDelay = Math.min(1500 * 2 ** this.retry, 20_000);
     const delay = Math.round(baseDelay * (0.8 + this.random() * 0.4));
     this.retry++;
+    // 强制恢复时立即停止下载，不在退避期间继续积压数据。
+    if (force) this.teardown();
     this.retryForce = force;
     this.emit('retrying', `${reason}，${Math.round(delay / 1000)}s 后重连`);
     clearTimeout(this.retryTimer);
@@ -463,7 +490,6 @@ export class Player {
       const forceReload = this.retryForce;
       this.retryForce = false;
       if (!forceReload && this.isHealthy()) {
-        this.retry = 0;
         this.emit('playing');
         this.startWatchdog();
         return;
@@ -572,6 +598,7 @@ export class Player {
   }
 
   teardown() {
+    this.stableSince = 0;
     this.frameEpoch++;
     if (this.frameCallback !== null) this.video.cancelVideoFrameCallback?.(this.frameCallback);
     this.frameCallback = null;

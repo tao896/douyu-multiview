@@ -999,6 +999,7 @@ body.room-stats-hidden .room-stats { display: none; }
 .overlay[hidden] { display: none; }
 .gift-log { position:absolute; left:10px; bottom:10px; z-index:4; width:min(250px,58%); display:flex; flex-direction:column; gap:5px; pointer-events:none; }
 .gift-item { min-height:42px; display:flex; align-items:center; gap:7px; padding:5px 9px 5px 5px; border-radius:24px; background:linear-gradient(100deg,rgba(13,67,153,.94),rgba(22,111,211,.82) 72%,rgba(44,147,238,.58)); color:#fff; box-shadow:0 3px 12px #001b4d99; animation:gift-in .28s ease-out both; overflow:hidden; }
+.gift-item-exit { animation:gift-out .28s ease-in forwards; pointer-events:none; }
 .gift-avatar { width:32px; height:32px; border-radius:50%; object-fit:cover; border:1px solid #ffffff66; flex:none; }
 .gift-copy { min-width:0; flex:1; display:flex; flex-direction:column; line-height:1.15; text-shadow:0 1px 2px #001b4d; }
 .gift-copy strong { font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1007,6 +1008,8 @@ body.room-stats-hidden .room-stats { display: none; }
 .gift-image-fallback { border-radius:50%; background:radial-gradient(circle at 35% 30%,#ffe08a,#f06 65%,#713); }
 .gift-count { color:#ffd66b; font-size:17px; font-style:italic; text-shadow:0 1px 2px #001b4d; flex:none; }
 @keyframes gift-in { from { opacity:0; transform:translateX(-18px) scale(.96); } to { opacity:1; transform:none; } }
+@keyframes gift-out { from { opacity:1; transform:none; } to { opacity:0; transform:translateX(-12px) scale(.96); } }
+@media (prefers-reduced-motion: reduce) { .gift-item { animation-duration:.01ms; } .gift-item-exit { animation-duration:.01ms; } }
 .gift-log[hidden] { display:none; }
 .chat-input { min-width:90px; width:120px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); padding:4px 6px; }
 .quick-search { position:fixed; top:18%; left:50%; transform:translateX(-50%); z-index:100; width:min(520px,calc(100vw - 32px)); padding:14px; border:1px solid var(--accent); border-radius:12px; background:var(--panel); box-shadow:0 12px 40px #0008; }
