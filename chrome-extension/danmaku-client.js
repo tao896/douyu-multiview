@@ -28,8 +28,7 @@ function parseFields(msg) {
   return out;
 }
 
-// 礼物配置在不同斗鱼版本中使用不同字段；优先使用帧内资源地址，
-// 再尝试官方 CDN 的常见路径，失败时由界面回退到占位图。
+// 帧内字段作为配置缺失时的回退；名称和图标由礼物配置补全。
 export function giftFromFields(f) {
   const id = String(f.gfid || f.giftid || f.gift_id || f.giftId || '').trim();
   const count = Math.max(1, Number(f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);

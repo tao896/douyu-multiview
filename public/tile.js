@@ -5,37 +5,8 @@ import { DanmakuRenderer } from './danmaku-render.js';
 import { DanmakuFilter } from './danmaku-filter.js';
 import { fetchJson, isAbortError } from './net.js';
 
-const giftMetaCache = new Map();
-const giftImageCandidates = (gift) => [gift.image].filter(Boolean);
-const giftMeta = (gift) => {
-  const key = String(gift.id || gift.giftName || 'unknown');
-  if (!giftMetaCache.has(key)) giftMetaCache.set(key, { image: giftImageCandidates(gift)[0] || '', candidates: [], pending: null, failed: false });
-  return giftMetaCache.get(key);
-};
-const giftImageUrl = (id) => `https://webconf.douyucdn.cn/resource/common/prop_gift_list?rid=0&giftid=${encodeURIComponent(id)}`;
-const extractGiftImage = (data, id) => {
-  const values = [];
-  const visit = (value) => {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) return value.forEach(visit);
-    const valueId = String(value.id ?? value.giftid ?? value.gift_id ?? value.gfid ?? '');
-    const image = value.pic ?? value.image ?? value.img ?? value.gifturl ?? value.gift_url ?? value.giftpic ?? value.gift_pic;
-    if ((!valueId || valueId === String(id)) && typeof image === 'string' && /^https?:\/\//i.test(image)) values.push(image);
-    Object.values(value).forEach(visit);
-  };
-  visit(data);
-  return values[0] || '';
-};
-const resolveGiftImage = (gift, meta) => {
-  if (meta.image || meta.failed || !gift.id) return Promise.resolve(meta.image);
-  if (!meta.pending) {
-    meta.pending = fetchJson(giftImageUrl(gift.id), { timeout: 8_000 })
-      .then((data) => { meta.image = extractGiftImage(data, gift.id); meta.failed = !meta.image; return meta.image; })
-      .catch(() => { meta.failed = true; return ''; })
-      .finally(() => { meta.pending = null; });
-  }
-  return meta.pending;
-};
+import { resolveGift } from './gift-config.js';
+
 const FALLBACK_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" rx="16" fill="%233b5b86"/%3E%3Ccircle cx="16" cy="12" r="6" fill="%23d6e4f5"/%3E%3Cpath d="M5 30c2-10 20-10 22 0" fill="%23d6e4f5"/%3E%3C/svg%3E';
 const FALLBACK_GIFT = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Ccircle cx="16" cy="16" r="15" fill="%23f06"/%3E%3Cpath d="M5 20 13 12 18 17 24 8 29 25H5Z" fill="%23ffd66b"/%3E%3C/svg%3E';
 
@@ -447,16 +418,18 @@ export class Tile {
     this.onDanmaku(this, chat);
   }
 
-  handleGift(gift) {
+  async handleGift(gift) {
+    gift = await resolveGift(gift);
+    if (this.destroyed) return;
     // 某些斗鱼礼物帧不携带价值字段；此时保留记录，避免整类礼物被误过滤。
     if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
+    if (this.giftValueFilter != null && Number.isFinite(gift.value) && gift.value < this.giftValueFilter) return;
     const key = `${gift.user || ''}|${gift.id || gift.giftName || ''}`;
     const existing = this.gifts.find((item) => item.key === key && Date.now() - item.time < 4000);
     if (existing) { existing.count += gift.count || 1; existing.time = Date.now(); }
     else {
-      const item = { ...gift, key, count: gift.count || 1, time: Date.now(), meta: giftMeta(gift) };
+      const item = { ...gift, key, count: gift.count || 1, time: Date.now(), meta: { image: gift.image } };
       this.gifts.unshift(item);
-      resolveGiftImage(item, item.meta).then(() => { if (!this.destroyed) this.renderGifts(); });
     }
     while (this.gifts.length > 4) {
       const expired = this.gifts.pop();
@@ -542,6 +515,11 @@ export class Tile {
 
   setGiftNameFilter(value) {
     this.giftNameFilter = String(value || '').split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+  }
+
+  setGiftValueFilter(value) {
+    const parsed = Number(value);
+    this.giftValueFilter = Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
 
   sendChat(text) {

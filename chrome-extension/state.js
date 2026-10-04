@@ -92,6 +92,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
     layoutPreset: ['auto', 'free', 'hero', 'dual'].includes(raw.layoutPreset) ? raw.layoutPreset : 'auto',
     layoutRatios: Array.isArray(raw.layoutRatios) ? raw.layoutRatios.map(Number).filter((x) => Number.isFinite(x) && x > 0).slice(0, 8) : [],
     giftNameFilter: String(raw.giftNameFilter || '').slice(0, 1000),
+    giftValueFilter: Number.isFinite(Number(raw.giftValueFilter)) && Number(raw.giftValueFilter) >= 0 ? Number(raw.giftValueFilter) : null,
   };
 }
 

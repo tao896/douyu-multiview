@@ -513,7 +513,7 @@
     <div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" id="danmakuSettingsSave" value="default">保存</button></div>
   </form>
 </dialog>
-<dialog class="modal" id="giftFilterDialog" aria-labelledby="giftFilterTitle"><form method="dialog" id="giftFilterForm"><h2 id="giftFilterTitle">过滤礼物</h2><label class="modal-field">要隐藏的礼物名称（逗号或换行分隔）<textarea id="giftNameFilter" rows="5" placeholder="鱼丸\n火箭"></textarea></label><div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" value="default">保存</button></div></form></dialog>
+<dialog class="modal" id="giftFilterDialog" aria-labelledby="giftFilterTitle"><form method="dialog" id="giftFilterForm"><h2 id="giftFilterTitle">过滤礼物</h2><label class="modal-field">要隐藏的礼物名称（逗号或换行分隔）<textarea id="giftNameFilter" rows="5" placeholder="鱼丸\n火箭"></textarea></label><label class="modal-field">礼物价值下限（低于此值不显示）<input id="giftValueFilter" type="number" min="0" step="any" placeholder="不限制"></label><div class="modal-actions"><button class="ghost" value="cancel">取消</button><button class="primary" value="default">保存</button></div></form></dialog>
 
 <script src="/vendor/mpegts.js"></script>
 <script type="module" src="/app.js"></script>

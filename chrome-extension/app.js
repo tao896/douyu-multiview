@@ -102,6 +102,7 @@ let hideOfflineWindows = false;
 let preferredFocusRid = '';
 let giftsEnabled = true;
 let giftNameFilter = '';
+let giftValueFilter = null;
 const roomDataDialog = new RoomDataDialog($('roomDataDialog'));
 
 function readStored(key) {
@@ -119,6 +120,7 @@ const appState = normalizeAppState(
 );
 
 giftNameFilter = appState.workspaces.find((item) => item.id === appState.activeWorkspaceId)?.giftNameFilter || '';
+giftValueFilter = appState.workspaces.find((item) => item.id === appState.activeWorkspaceId)?.giftValueFilter ?? null;
 
 function activeWorkspace() {
   return appState.workspaces.find((item) => item.id === appState.activeWorkspaceId) || appState.workspaces[0];
@@ -776,6 +778,7 @@ function openRoom(room, { persist = true } = {}) {
   tile.setDanmakuSpeed(Number($('danmakuSpeedSelect').value) || 1);
   tile.setGiftsEnabled(giftsEnabled);
   tile.setGiftNameFilter(giftNameFilter);
+  tile.setGiftValueFilter(giftValueFilter);
   copyTileSettingsToRoom(tile, room);
   grid.appendChild(tile.el);
   makeDraggable(tile);
@@ -957,6 +960,8 @@ function clearRuntime() {
 }
 
 function loadWorkspaceRuntime(current) {
+  giftNameFilter = current.giftNameFilter || '';
+  giftValueFilter = current.giftValueFilter ?? null;
   grid.dataset.cols = current.cols;
   grid.dataset.layout = current.layoutMode || 'grid';
   preferredFocusRid = current.focusedRid || '';
@@ -1184,13 +1189,17 @@ $('giftNameFilter')?.addEventListener('input', (event) => {
 });
 $('giftFilterBtn')?.addEventListener('click', () => {
   $('giftNameFilter').value = giftNameFilter;
+  $('giftValueFilter').value = giftValueFilter ?? '';
   $('giftFilterDialog').showModal();
 });
 $('giftFilterForm')?.addEventListener('submit', (event) => {
   if (event.submitter?.value === 'cancel') return;
   giftNameFilter = $('giftNameFilter').value;
+  const parsedValue = Number($('giftValueFilter').value);
+  giftValueFilter = Number.isFinite(parsedValue) && parsedValue >= 0 && $('giftValueFilter').value !== '' ? parsedValue : null;
   activeWorkspace().giftNameFilter = giftNameFilter;
-  tiles.forEach((tile) => tile.setGiftNameFilter(giftNameFilter));
+  activeWorkspace().giftValueFilter = giftValueFilter;
+  tiles.forEach((tile) => { tile.setGiftNameFilter(giftNameFilter); tile.setGiftValueFilter(giftValueFilter); });
   save({ immediate: true });
 });
 
