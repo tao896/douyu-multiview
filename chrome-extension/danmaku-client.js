@@ -28,6 +28,17 @@ function parseFields(msg) {
   return out;
 }
 
+// 礼物配置在不同斗鱼版本中使用不同字段；优先使用帧内资源地址，
+// 再尝试官方 CDN 的常见路径，失败时由界面回退到占位图。
+export function giftFromFields(f) {
+  const id = String(f.gfid || f.giftid || f.gift_id || f.giftId || '').trim();
+  const count = Math.max(1, Number(f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);
+  const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
+  const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
+  const rawValue = Number(f.gbc || f.gs || f.dhb || f.dms || f.gift_score || f.score) || 0;
+  return { id, giftName, image, count, value: rawValue * count, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
+}
+
 export class DanmakuClient {
   constructor(rid, { onChat, onGift, onStatus, onStats } = {}) {
     this.rid = String(rid);
@@ -125,16 +136,7 @@ export class DanmakuClient {
     } else if (type === 'dgb' || type === 'uenter') {
       const f = parseFields(msg);
       if (type === 'dgb') {
-        const count = Math.max(1, Number(f.gfc || f.gc || 1) || 1);
-        // 斗鱼不同房间/版本使用 gs、gbc、dhb、dms 等字段表示鱼翅价值。
-        const rawValue = Number(f.gbc || f.gs || f.dhb || f.dms || f.gift_score || f.score) || 0;
-        const unitValue = rawValue;
-        this.onGift({
-        user: unesc(f.nn || f.un || '匿名用户'),
-        giftName: unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gfid || '礼物'),
-        count,
-        value: unitValue * count,
-        });
+        this.onGift(giftFromFields(f));
       }
     } else if (type === 'rss') {
       // 开播状态变化

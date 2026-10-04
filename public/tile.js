@@ -5,6 +5,40 @@ import { DanmakuRenderer } from './danmaku-render.js';
 import { DanmakuFilter } from './danmaku-filter.js';
 import { fetchJson, isAbortError } from './net.js';
 
+const giftMetaCache = new Map();
+const giftImageCandidates = (gift) => [gift.image].filter(Boolean);
+const giftMeta = (gift) => {
+  const key = String(gift.id || gift.giftName || 'unknown');
+  if (!giftMetaCache.has(key)) giftMetaCache.set(key, { image: giftImageCandidates(gift)[0] || '', candidates: [], pending: null, failed: false });
+  return giftMetaCache.get(key);
+};
+const giftImageUrl = (id) => `https://webconf.douyucdn.cn/resource/common/prop_gift_list?rid=0&giftid=${encodeURIComponent(id)}`;
+const extractGiftImage = (data, id) => {
+  const values = [];
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) return value.forEach(visit);
+    const valueId = String(value.id ?? value.giftid ?? value.gift_id ?? value.gfid ?? '');
+    const image = value.pic ?? value.image ?? value.img ?? value.gifturl ?? value.gift_url ?? value.giftpic ?? value.gift_pic;
+    if ((!valueId || valueId === String(id)) && typeof image === 'string' && /^https?:\/\//i.test(image)) values.push(image);
+    Object.values(value).forEach(visit);
+  };
+  visit(data);
+  return values[0] || '';
+};
+const resolveGiftImage = (gift, meta) => {
+  if (meta.image || meta.failed || !gift.id) return Promise.resolve(meta.image);
+  if (!meta.pending) {
+    meta.pending = fetchJson(giftImageUrl(gift.id), { timeout: 8_000 })
+      .then((data) => { meta.image = extractGiftImage(data, gift.id); meta.failed = !meta.image; return meta.image; })
+      .catch(() => { meta.failed = true; return ''; })
+      .finally(() => { meta.pending = null; });
+  }
+  return meta.pending;
+};
+const FALLBACK_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" rx="16" fill="%233b5b86"/%3E%3Ccircle cx="16" cy="12" r="6" fill="%23d6e4f5"/%3E%3Cpath d="M5 30c2-10 20-10 22 0" fill="%23d6e4f5"/%3E%3C/svg%3E';
+const FALLBACK_GIFT = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Ccircle cx="16" cy="16" r="15" fill="%23f06"/%3E%3Cpath d="M5 20 13 12 18 17 24 8 29 25H5Z" fill="%23ffd66b"/%3E%3C/svg%3E';
+
 const tpl = document.getElementById('tileTpl');
 
 // 鼠标进入、移动或点击后显示工具栏，窗口内停止操作 1 秒隐藏，移出立即隐藏上下两条。
@@ -414,20 +448,47 @@ export class Tile {
   handleGift(gift) {
     // 某些斗鱼礼物帧不携带价值字段；此时保留记录，避免整类礼物被误过滤。
     if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
-    this.gifts.push(gift);
-    if (this.gifts.length > 50) this.gifts.splice(0, this.gifts.length - 50);
+    const key = `${gift.user || ''}|${gift.id || gift.giftName || ''}`;
+    const existing = this.gifts.find((item) => item.key === key && Date.now() - item.time < 4000);
+    if (existing) { existing.count += gift.count || 1; existing.time = Date.now(); }
+    else {
+      const item = { ...gift, key, count: gift.count || 1, time: Date.now(), meta: giftMeta(gift) };
+      this.gifts.unshift(item);
+      resolveGiftImage(item, item.meta).then(() => { if (!this.destroyed) this.renderGifts(); });
+    }
+    this.gifts = this.gifts.slice(0, 4);
     this.renderGifts();
     clearTimeout(this.giftHideTimer);
     this.giftHideTimer = setTimeout(() => {
-      if (this.$.giftLog) this.$.giftLog.hidden = true;
+      const now = Date.now();
+      this.gifts = this.gifts.filter((item) => now - item.time < 5000);
+      this.renderGifts();
+      if (this.gifts.length) this.giftHideTimer = setTimeout(() => this.renderGifts(), 1000);
     }, 5000);
   }
 
   renderGifts() {
     if (!this.$.giftLog) return;
-    this.$.giftLog.replaceChildren(...this.gifts.slice(-8).reverse().map((gift) => {
+    this.$.giftLog.replaceChildren(...this.gifts.map((gift) => {
       const row = document.createElement('div');
-      row.textContent = `${gift.user || '匿名用户'} 送出 ${gift.giftName || '礼物'} ×${gift.count || 1}`;
+      row.className = 'gift-item';
+      const avatar = document.createElement('img'); avatar.className = 'gift-avatar'; avatar.alt = ''; avatar.src = gift.avatar || this.s.avatar || FALLBACK_AVATAR;
+      avatar.onerror = () => { avatar.onerror = null; avatar.src = FALLBACK_AVATAR; };
+      const text = document.createElement('div'); text.className = 'gift-copy';
+      const user = document.createElement('strong'); user.textContent = gift.user || '匿名用户';
+      const name = document.createElement('span'); name.textContent = `送出 ${gift.giftName || '礼物'}`;
+      text.append(user, name);
+      const image = document.createElement('img'); image.className = 'gift-image'; image.alt = gift.giftName || '礼物';
+      image.src = gift.meta?.image || FALLBACK_GIFT;
+      if (!gift.meta?.image) image.classList.add('gift-image-fallback');
+      image.onerror = () => {
+        image.onerror = null;
+        if (gift.meta) { gift.meta.image = ''; gift.meta.failed = true; }
+        image.src = FALLBACK_GIFT;
+        image.classList.add('gift-image-fallback');
+      };
+      const count = document.createElement('b'); count.className = 'gift-count'; count.textContent = `×${gift.count || 1}`;
+      row.append(avatar, text, image, count);
       return row;
     }));
     this.$.giftLog.hidden = !this.giftsEnabled || this.gifts.length === 0;
