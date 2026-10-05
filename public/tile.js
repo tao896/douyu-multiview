@@ -419,7 +419,7 @@ export class Tile {
   }
 
   async handleGift(gift) {
-    gift = await resolveGift(gift);
+    gift = await resolveGift(gift, this.s.rid);
     if (this.destroyed) return;
     // 某些斗鱼礼物帧不携带价值字段；此时保留记录，避免整类礼物被误过滤。
     if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
