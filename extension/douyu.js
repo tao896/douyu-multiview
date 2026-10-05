@@ -5,6 +5,14 @@ import { md5 } from './md5.js';
 const ORIGIN = 'https://www.douyu.com';
 const UPSTREAM_TIMEOUT_MS = 12_000;
 const ROOM_CACHE_MS = 5_000;
+const AVATAR_CDN = 'https://apic.douyucdn.cn/';
+
+export function normalizeAvatarUrl(value) {
+  const avatar = String(value || '').trim();
+  if (!avatar) return '';
+  if (/^https?:\/\//i.test(avatar)) return avatar;
+  return `${AVATAR_CDN}${avatar.replace(/^\/+/, '')}`;
+}
 
 export class DouyuError extends Error {
   constructor(message, { code, status = 502 } = {}) {
@@ -185,7 +193,7 @@ export function getRoomInfo(rid) {
       rid: String(room.room_id || rid),
       title: room.room_name || `房间 ${rid}`,
       nickname: room.nickname || '',
-      avatar: room.avatar_mid || room.avatar_small || '',
+      avatar: normalizeAvatarUrl(room.avatar_mid || room.avatar_small),
       live: Number(room.show_status) === 1,
       loop: Number(room.videoLoop) === 1,
     };

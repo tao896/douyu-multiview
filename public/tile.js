@@ -425,14 +425,14 @@ export class Tile {
     if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
     if (this.giftValueFilter != null && Number.isFinite(gift.value) && gift.value < this.giftValueFilter) return;
     const key = `${gift.user || ''}|${gift.id || gift.giftName || ''}`;
-    const existing = this.gifts.find((item) => item.key === key && Date.now() - item.time < 4000);
+    const existing = this.gifts.find((item) => item.key === key);
     if (existing) { existing.count += gift.count || 1; existing.time = Date.now(); }
     else {
       const item = { ...gift, key, count: gift.count || 1, time: Date.now(), meta: { image: gift.image } };
-      this.gifts.unshift(item);
+      this.gifts.push(item);
     }
     while (this.gifts.length > 4) {
-      const expired = this.gifts.pop();
+      const expired = this.gifts.shift();
       this.fadeGift(expired);
     }
     this.renderGifts();
@@ -484,11 +484,17 @@ export class Tile {
       const count = document.createElement('b'); count.className = 'gift-count'; count.textContent = `×${gift.count || 1}`;
       row.append(avatar, text, image, count);
       }
-      row.querySelector('.gift-count').textContent = `×${gift.count || 1}`;
-      this.$.giftLog.append(row);
+      const countText = `×${gift.count || 1}`;
+      const countNode = row.querySelector('.gift-count');
+      if (countNode.textContent !== countText) countNode.textContent = countText;
+      // Existing rows stay attached so their entrance and image animations keep running.
+      if (row.parentNode !== this.$.giftLog) this.$.giftLog.append(row);
     });
     [...this.giftRows].forEach(([key, row]) => {
-      if (!activeKeys.has(key) && !row.classList.contains('gift-item-exit')) row.remove();
+      if (!activeKeys.has(key) && !row.classList.contains('gift-item-exit')) {
+        row.remove();
+        this.giftRows.delete(key);
+      }
     });
     this.$.giftLog.hidden = !this.giftsEnabled || this.gifts.length === 0;
     this.$.gift?.classList.toggle('on', this.giftsEnabled);
