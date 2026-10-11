@@ -151,18 +151,6 @@ export class DanmakuClient {
     }
   }
 
-  sendChat(text) {
-    const value = String(text || '').trim();
-    if (!value || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.onStatus({ type: 'send-error', msg: '弹幕连接尚未建立' });
-      return false;
-    }
-    // 未登录连接会由斗鱼返回 error；登录态由浏览器/扩展提供。
-    const content = value.replace(/@/g, '@A').replace(/\//g, '@S');
-    this.ws.send(pack(`type@=chatmessage/receiver@=0/content@=${content}/scope@=1/ct@=1/`));
-    return true;
-  }
-
   close() {
     this.closed = true;
     clearInterval(this.timer);

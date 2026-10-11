@@ -100,7 +100,6 @@ export class Tile {
       pip: q('[data-act="pip"]'),
       aggregate: q('[data-act="aggregate"]'),
       gift: q('[data-act="gift"]'),
-      chatInput: q('[data-chat-input]'),
     };
     this.updateTitleLink(this.s.title || '加载中…');
     this.$.nickname.textContent = this.s.nickname || '';
@@ -169,14 +168,6 @@ export class Tile {
     });
 
     this.$.vol.addEventListener('input', () => this.setVolume(Number(this.$.vol.value)));
-    this.$.chatInput?.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        const value = event.currentTarget.value.trim();
-        if (!value) return;
-        if (this.sendChat(value)) event.currentTarget.value = '';
-      }
-    });
     this.$.opacity.addEventListener('input', () => this.setOpacity(Number(this.$.opacity.value) / 100));
     this.$.rate.addEventListener('change', () => this.setRate(Number(this.$.rate.value)));
     // 点画面：没在播就起播，否则切静音（多窗口下最顺手的操作）
@@ -436,14 +427,22 @@ export class Tile {
       this.fadeGift(expired);
     }
     this.renderGifts();
+    this.scheduleGiftExpiry();
+  }
+
+  scheduleGiftExpiry() {
     clearTimeout(this.giftHideTimer);
+    this.giftHideTimer = 0;
+    if (this.destroyed || !this.gifts.length) return;
+    const delay = Math.max(0, Math.min(...this.gifts.map((item) => item.time + 5000)) - Date.now());
     this.giftHideTimer = setTimeout(() => {
+      if (this.destroyed) return;
       const now = Date.now();
       this.gifts.filter((item) => now - item.time >= 5000).forEach((item) => this.fadeGift(item));
       this.gifts = this.gifts.filter((item) => now - item.time < 5000);
       this.renderGifts();
-      if (this.gifts.length) this.giftHideTimer = setTimeout(() => this.renderGifts(), 1000);
-    }, 5000);
+      this.scheduleGiftExpiry();
+    }, delay);
   }
 
   renderGifts() {
@@ -526,12 +525,6 @@ export class Tile {
   setGiftValueFilter(value) {
     const parsed = Number(value);
     this.giftValueFilter = Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-  }
-
-  sendChat(text) {
-    const sent = this.dm?.sendChat(text) || false;
-    if (sent) this.pushDanmaku(`我：${text}`, 0);
-    return sent;
   }
 
   pushDanmaku(text, color) {

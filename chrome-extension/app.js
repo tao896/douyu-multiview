@@ -1203,27 +1203,6 @@ $('giftFilterForm')?.addEventListener('submit', (event) => {
   save({ immediate: true });
 });
 
-// 斗鱼登录只打开官方页面，不在本应用收集密码。
-$('douyuLoginBtn')?.addEventListener('click', () => {
-  window.open('https://www.douyu.com/', '_blank', 'noopener,noreferrer');
-  toast('请在斗鱼页面完成登录后返回发送弹幕');
-});
-async function refreshDouyuAuthStatus() {
-  const button = $('douyuLoginBtn');
-  if (!button) return;
-  const runtime = globalThis.chrome?.runtime;
-  if (!runtime?.sendMessage) {
-    button.dataset.tooltip = '登录状态未知';
-    return;
-  }
-  try {
-    const result = await new Promise((resolve) => runtime.sendMessage({ type: 'douyu-auth-status' }, resolve));
-    button.dataset.tooltip = result?.loggedIn ? '斗鱼已登录' : '点击打开斗鱼登录页';
-    button.setAttribute('aria-label', result?.loggedIn ? '斗鱼已登录' : '斗鱼未登录');
-  } catch { button.dataset.tooltip = '登录状态未知'; }
-}
-refreshDouyuAuthStatus();
-
 // 长按 Ctrl 呼出快速打开框。
 let ctrlTimer = 0;
 const quickSearch = $('quickSearch');
