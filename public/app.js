@@ -232,8 +232,15 @@ function setSidebarCollapsed(collapsed, { persist = true } = {}) {
 function setSidebarHidden(hidden, { persist = true } = {}) {
   const next = !!hidden;
   const visuallyHidden = !isMobile() && next;
+  const sidebar = $('roomSidebar');
+  // Move focus out before hiding the subtree; otherwise Chrome reports a
+  // blocked aria-hidden ancestor when the hide button remains focused.
+  if (visuallyHidden && sidebar.contains(document.activeElement)) {
+    $('sidebarRevealBtn').focus({ preventScroll: true });
+  }
   workspaceEl.classList.toggle('sidebar-hidden', next);
-  $('roomSidebar').setAttribute('aria-hidden', String(visuallyHidden));
+  sidebar.toggleAttribute('inert', visuallyHidden);
+  sidebar.setAttribute('aria-hidden', String(visuallyHidden));
   $('sidebarRevealBtn').setAttribute('aria-expanded', String(!visuallyHidden));
   if (persist) save();
 }

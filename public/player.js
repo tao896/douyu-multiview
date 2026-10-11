@@ -32,6 +32,12 @@ const SOURCE_BUFFER_APPEND_ERROR = /^\[MSEController\] > Failed to execute 'appe
 // 流地址过期或 CDN 切换时，mpegts 会先输出 404，再由播放器重新签名重连。
 // 这属于已处理的瞬态事件，避免 Chrome 控制台显示为未捕获错误。
 const LOADER_404_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = 404, msg = Not Found|IOException: type = HttpStatusCodeInvalid, code = 404, msg = Not Found)$/;
+// mpegts 1.8.x can report these teardown races after the player has already
+// been replaced. They are internal, recoverable noise and must not flood the
+// extension page console while the watchdog rebuilds the stream.
+const TEARDOWN_RACE_ERROR = /(?:Maximum call stack size exceeded|Cannot read properties of null \(reading '(?:emit|notifyBufferedPositionChanged)'\)|Aborting asynchronous remove\(\) operation is disallowed)/i;
+const HANDLED_STREAM_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = -1, msg = (?:network error|Live stream ended)|IOException: type = Exception, code = -1, msg = network error)$/;
+const AUDIO_CONFIG_UPDATE = /^\[FLVDemuxer\] > AudioSpecificConfig has been changed, re-generate initialization segment$/;
 
 const STREAM_UPDATE_WARNINGS = new Set([
   '[FLVDemuxer] > AVCDecoderConfigurationRecord has been changed, re-generate initialization segment',
@@ -43,7 +49,7 @@ function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
     || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
-    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message) || ROUTINE_INFO_LOG.test(message);
+    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message) || ROUTINE_INFO_LOG.test(message) || TEARDOWN_RACE_ERROR.test(message) || HANDLED_STREAM_ERROR.test(message) || AUDIO_CONFIG_UPDATE.test(message);
 }
 
 function isEarlyEofError(type, detail) {
@@ -218,7 +224,7 @@ export class Player {
         const status = httpFailure && info?.code ? ` (HTTP ${info.code})` : '';
         this.recordSyncEvent('mpegts-error', `${type}${detail ? ': ' + detail : ''}${status}`);
         this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
-          force: httpFailure || detail === 'MediaMSEError' || isEarlyEofError(type, detail),
+            force: httpFailure || detail === 'MediaMSEError' || detail === 'Exception' || isEarlyEofError(type, detail),
         });
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
