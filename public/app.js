@@ -240,7 +240,9 @@ function setSidebarHidden(hidden, { persist = true } = {}) {
   }
   workspaceEl.classList.toggle('sidebar-hidden', next);
   sidebar.toggleAttribute('inert', visuallyHidden);
-  sidebar.setAttribute('aria-hidden', String(visuallyHidden));
+  // `inert` removes the hidden subtree from the accessibility tree and moves
+  // focusability with it; aria-hidden here can race the click's focused button.
+  sidebar.removeAttribute('aria-hidden');
   $('sidebarRevealBtn').setAttribute('aria-expanded', String(!visuallyHidden));
   if (persist) save();
 }

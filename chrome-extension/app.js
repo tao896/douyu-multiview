@@ -238,7 +238,7 @@ function setSidebarHidden(hidden, { persist = true } = {}) {
   }
   workspaceEl.classList.toggle('sidebar-hidden', next);
   sidebar.toggleAttribute('inert', visuallyHidden);
-  sidebar.setAttribute('aria-hidden', String(visuallyHidden));
+  sidebar.removeAttribute('aria-hidden');
   $('sidebarRevealBtn').setAttribute('aria-expanded', String(!visuallyHidden));
   if (persist) save();
 }
