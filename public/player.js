@@ -37,6 +37,7 @@ const LOADER_404_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loade
 // extension page console while the watchdog rebuilds the stream.
 const TEARDOWN_RACE_ERROR = /(?:Maximum call stack size exceeded|Cannot read properties of null \(reading '(?:emit|notifyBufferedPositionChanged)'\)|Aborting asynchronous remove\(\) operation is disallowed)/i;
 const HANDLED_STREAM_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = -1, msg = (?:network error|Live stream ended)|IOException: type = Exception, code = -1, msg = network error)$/;
+const FETCH_FAILURE_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = -1, msg = Failed to fetch|IOException: type = Exception, code = -1, msg = Failed to fetch)$/;
 const AUDIO_CONFIG_UPDATE = /^\[FLVDemuxer\] > AudioSpecificConfig has been changed, re-generate initialization segment$/;
 
 const STREAM_UPDATE_WARNINGS = new Set([
@@ -49,7 +50,7 @@ function isRoutinePlaybackWarning(message) {
   return AUDIO_OVERLAP_WARNING.test(message) || AUDIO_TIMESTAMP_GAP_WARNING.test(message)
     || STARTUP_STALL_WARNING.test(message) || STREAM_UPDATE_WARNINGS.has(message)
     || EARLY_EOF_WARNING.test(message) || UNCONSUMED_DATA_WARNING.test(message)
-    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message) || ROUTINE_INFO_LOG.test(message) || TEARDOWN_RACE_ERROR.test(message) || HANDLED_STREAM_ERROR.test(message) || AUDIO_CONFIG_UPDATE.test(message);
+    || SOURCE_BUFFER_EVENT_ERROR.test(message) || SOURCE_BUFFER_APPEND_ERROR.test(message) || LOADER_404_ERROR.test(message) || ROUTINE_INFO_LOG.test(message) || TEARDOWN_RACE_ERROR.test(message) || HANDLED_STREAM_ERROR.test(message) || FETCH_FAILURE_ERROR.test(message) || AUDIO_CONFIG_UPDATE.test(message);
 }
 
 function isEarlyEofError(type, detail) {
