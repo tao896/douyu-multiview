@@ -1128,9 +1128,7 @@ input[type="range"]::-moz-range-thumb {
   flex-wrap: wrap;
   gap: clamp(3px, 1cqw, 8px);
   padding: clamp(4px, 1.2cqw, 8px) clamp(5px, 1.5cqw, 10px);
-  max-height: 48%;
-  overflow: auto;
-  overscroll-behavior: contain;
+  overflow: visible;
   font-size: var(--control-font);
 }
 .tile-head .meta { flex: 1 1 80px; }
@@ -1164,7 +1162,20 @@ input[type="range"]::-moz-range-thumb {
   max-width: 120px;
 }
 .tile-foot .vol-num { display: block; width: auto; font-size: var(--control-font); }
-.tile-foot .rate { flex: 0 1 clamp(70px, 14cqw, 110px); min-width: 60px; max-width: 110px; }
+.tile-foot .rate {
+  flex: 0 0 auto;
+  width: clamp(60px, 10cqw, 76px);
+  min-width: 0;
+  max-width: 76px;
+  padding-inline: 4px;
+}
+/* 为全屏按钮独立留出右侧空间，其他控件换行也不会挤走它。 */
+.tile-foot { padding-right: calc(var(--control-size) + clamp(5px, 1.5cqw, 10px) + clamp(3px, 1cqw, 8px)); }
+.tile-foot [data-act="fullscreen"] {
+  position: absolute;
+  right: clamp(5px, 1.5cqw, 10px);
+  bottom: clamp(4px, 1.2cqw, 8px);
+}
 
 @container live-tile (max-width: 420px) {
   .tile-head .head-actions { flex-basis: 100%; justify-content: flex-end; }
@@ -1174,7 +1185,9 @@ input[type="range"]::-moz-range-thumb {
   --gift-inset: clamp(4px, 1.5cqw, 12px);
   left: var(--gift-inset);
   bottom: var(--gift-inset);
-  width: min(clamp(200px, 48cqw, 360px), calc(100% - 2 * var(--gift-inset)));
+  width: fit-content;
+  max-width: min(300px, calc(100% - 2 * var(--gift-inset)));
+  align-items: flex-start;
   max-height: calc(100% - 2 * var(--gift-inset));
   gap: clamp(3px, .8cqw, 7px);
   /* 极矮画面优先显示最新礼物，避免卡片被压扁或越出播放区。 */
@@ -1183,10 +1196,13 @@ input[type="range"]::-moz-range-thumb {
 }
 .stage .gift-item {
   flex: 0 0 auto;
+  width: fit-content;
+  max-width: 100%;
   min-height: clamp(34px, 7cqw, 52px);
   gap: clamp(4px, 1cqw, 9px);
   padding: clamp(3px, .8cqw, 7px);
 }
+.stage .gift-copy { flex: 0 1 auto; }
 .stage .gift-avatar { width: clamp(24px, 5cqw, 38px); height: clamp(24px, 5cqw, 38px); }
 .stage .gift-image { width: clamp(22px, 4.7cqw, 36px); height: clamp(22px, 4.7cqw, 36px); }
 .stage .gift-copy strong,
