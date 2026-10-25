@@ -11,10 +11,29 @@ const FRAME_STALL_MS = 6_000;
 const RECOVERY_COOLDOWN_MS = 15_000;
 const SAMPLE_GRACE_MS = 6_000;
 const STALE_LATENCY_SAMPLES = 2;
-const SYNC_OBSERVE_MS = 1000;
 const FRAME_SAMPLE_MS = 333;
+// 音画偏差取音频、视频两个 SourceBuffer 缓冲尾部之差。mpegts 遇到时间戳断档时
+// 视频会压缩空档、音频会补静音帧，两条时间线由此错开，且 seek 无法修正，只能重建 remuxer。
+const SYNC_OBSERVE_MS = 1000;
+const SYNC_GRACE_MS = 5_000;
+const SYNC_BASELINE_SAMPLES = 5;
 const SYNC_WARN_SECONDS = 0.2;
-const SYNC_HARD_SECONDS = 0.5;
+const SYNC_REBUILD_SECONDS = 0.35;
+const SYNC_REBUILD_SAMPLES = 5;
+const SYNC_REBUILD_COOLDOWN_MS = 30_000;
+// 渲染滞后：解码/合成跟不上时，已呈现帧的 mediaTime 落后于音频驱动的 currentTime。
+// 取近 3 秒中位数，仅在诊断面板展示。
+const RENDER_LAG_WINDOW = 9;
+// Chrome 的音频时钟按已播放采样数推进，不按时间戳重新对齐：音频解码器因配置切换重建、
+// 或时间线出现断档后，声音会领先画面且不会自愈，只有 seek/重载能重新锚定（flv.js #241）。
+// 这种偏移在 currentTime 内部，前面两种测量都看不到，因此按事件和定期两种方式重新锚定。
+const REANCHOR_COOLDOWN_MS = 30_000;
+const REANCHOR_INTERVAL_MS = 120_000;
+const REANCHOR_SETTLE_SECONDS = 0.5;
+const REANCHOR_LEAD_MS = 30;
+const REANCHOR_TOLERANCE_SECONDS = 0.3;
+const REANCHOR_MIN_BUFFER_SECONDS = 0.3;
+const AUDIO_GAP_MS = 2;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
@@ -32,6 +51,9 @@ const SOURCE_BUFFER_APPEND_ERROR = /^\[MSEController\] > Failed to execute 'appe
 // 流地址过期或 CDN 切换时，mpegts 会先输出 404，再由播放器重新签名重连。
 // 这属于已处理的瞬态事件，避免 Chrome 控制台显示为未捕获错误。
 const LOADER_404_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = 404, msg = Not Found|IOException: type = HttpStatusCodeInvalid, code = 404, msg = Not Found)$/;
+// mpegts 1.8.x can report these teardown races after the player has already
+// been replaced. They are internal, recoverable noise and must not flood the
+// extension page console while the watchdog rebuilds the stream.
 const TEARDOWN_RACE_ERROR = /(?:Maximum call stack size exceeded|Cannot read properties of null \(reading '(?:emit|notifyBufferedPositionChanged)'\)|Aborting asynchronous remove\(\) operation is disallowed)/i;
 const HANDLED_STREAM_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = -1, msg = (?:network error|Live stream ended)|IOException: type = Exception, code = -1, msg = network error)$/;
 const FETCH_FAILURE_ERROR = /^\[(?:IOController|TransmuxingController)\] > (?:Loader error, code = -1, msg = Failed to fetch|IOException: type = Exception, code = -1, msg = Failed to fetch)$/;
@@ -157,17 +179,22 @@ export class Player {
     this.visibilityRecoveryCount = 0;
     this.lastVisibilityRecoveryAt = -Infinity;
     this.lastVisibilityRecoveryReason = '';
-    this.audioContext = null;
-    this.audioSource = null;
-    this.audioClockAnchor = null;
-    this.syncOffsetSeconds = null;
-    this.syncStatus = 'unmeasurable';
-    this.syncAnomalySince = 0;
-    this.syncSamples = 0;
     this.syncEvents = [];
     this.syncTimer = 0;
-    this.syncCorrectionAt = -Infinity;
-    this.onSeeking = () => this.resetFrameSamples();
+    this.syncRebuildCount = 0;
+    this.lastSyncRebuildAt = -Infinity;
+    this.reanchorTimer = 0;
+    this.reanchorCount = 0;
+    this.lastReanchorAt = -Infinity;
+    this.audioConfigChanges = 0;
+    this.audioGapMs = 0;
+    this.resetSyncSamples();
+    this.onSeeking = () => {
+      this.resetFrameSamples();
+      // 任何 seek（追帧、切页恢复、重新锚定）都会让 Chrome 重新对齐音视频时钟。
+      this.lastAnchorAt = Date.now();
+      if (this.pendingReanchorAt != null && this.video.currentTime > this.pendingReanchorAt) this.pendingReanchorAt = null;
+    };
     this.onProgress = () => {
       if (this.pendingAlignment && this.alignRecoveredMedia()) this.pendingAlignment = false;
     };
@@ -208,10 +235,10 @@ export class Player {
       this.pendingAlignment = recovering;
       this.startFrameMonitor();
       mp.attachMediaElement(this.video);
+      this.observeTimeline(mp);
       this.video.muted = wasMuted;
       this.video.volume = wasVolume;
       this.video.playbackRate = 1;
-      if (!this.video.muted && this.video.volume > 0) this.ensureAudioClock();
       this.startSyncMonitor();
 
       mp.on(mpegts.Events.ERROR, (type, detail, info) => {
@@ -268,6 +295,8 @@ export class Player {
     this.staleLatencySamples = 0;
     this.qualitySample = null;
     this.recentDroppedRatio = 0;
+    this.renderLagSamples = [];
+    this.renderLagSeconds = null;
   }
 
   recordSyncEvent(type, detail = '') {
@@ -275,48 +304,200 @@ export class Player {
     if (this.syncEvents.length > 30) this.syncEvents.shift();
   }
 
-  ensureAudioClock() {
-    if (this.audioContext || typeof AudioContext === 'undefined') return;
-    try {
-      this.audioContext = new AudioContext();
-      this.audioSource = this.audioContext.createMediaElementSource(this.video);
-      this.audioSource.connect(this.audioContext.destination);
-      this.recordSyncEvent('audio-clock-ready');
-    } catch (error) {
-      this.recordSyncEvent('audio-clock-unavailable', error?.message || String(error));
+  // 每条新流（新 remuxer）都重新建立基线。
+  resetSyncSamples() {
+    this.syncAfter = Date.now() + SYNC_GRACE_MS;
+    this.syncBaselineSamples = [];
+    this.syncBaselineSeconds = null;
+    this.syncTrackSkewSeconds = null;
+    this.syncOffsetSeconds = null;
+    this.syncStatus = 'unmeasurable';
+    this.syncDriftSamples = 0;
+    this.syncSamples = 0;
+    clearTimeout(this.reanchorTimer);
+    this.reanchorTimer = 0;
+    this.audioInitSeen = false;
+    this.audioEndDts = null;
+    this.pendingReanchorAt = null;
+    this.keyframeTimes = [];
+    this.lastAnchorAt = Date.now();
+  }
+
+  isAudible() {
+    return !this.video.muted && this.video.volume > 0;
+  }
+
+  // 在实例上包一层 MSE 追加入口，观察真正送进 Chrome 的音频时间线与关键帧。
+  observeTimeline(mp) {
+    const mse = mp?._player_engine?._mse_controller;
+    if (!mse || typeof mse.appendInitSegment !== 'function' || typeof mse.appendMediaSegment !== 'function') return;
+    const appendInit = mse.appendInitSegment;
+    const appendMedia = mse.appendMediaSegment;
+    mse.appendInitSegment = (segment, replay) => {
+      // replay=true 是 SourceOpen 后补发首个初始化段，不算配置切换。
+      if (this.mp === mp && !replay && segment?.type === 'audio') {
+        if (this.audioInitSeen) {
+          this.audioConfigChanges++;
+          this.recordSyncEvent('audio-config-change');
+          this.pendingReanchorAt = this.audioEndDts == null ? this.video.currentTime : this.audioEndDts / 1000;
+        }
+        this.audioInitSeen = true;
+      }
+      return appendInit.call(mse, segment, replay);
+    };
+    mse.appendMediaSegment = (segment) => {
+      if (this.mp === mp) this.observeMediaSegment(segment);
+      return appendMedia.call(mse, segment);
+    };
+  }
+
+  observeMediaSegment(segment) {
+    const info = segment?.info;
+    if (!info) return;
+    if (segment.type === 'video') {
+      for (const point of info.syncPoints || []) {
+        if (Number.isFinite(point?.pts)) this.keyframeTimes.push(point.pts / 1000);
+      }
+      if (this.keyframeTimes.length > 30) this.keyframeTimes.splice(0, this.keyframeTimes.length - 30);
+      return;
     }
+    if (segment.type !== 'audio' || !Number.isFinite(info.beginDts) || !Number.isFinite(info.endDts)) return;
+    // mpegts 正常输出的音频是首尾相接的；出现断档或重叠时，Chrome 的采样计数时钟会偏离时间戳。
+    if (this.audioEndDts != null) {
+      const gap = info.beginDts - this.audioEndDts;
+      if (Math.abs(gap) > AUDIO_GAP_MS) {
+        this.audioGapMs += Math.abs(gap);
+        this.recordSyncEvent('audio-timeline-gap', `${Math.round(gap)}ms`);
+        this.pendingReanchorAt = Math.max(this.pendingReanchorAt ?? 0, info.beginDts / 1000);
+      }
+    }
+    this.audioEndDts = info.endDts;
+  }
+
+  // 由同步定时器每秒调用：断点之后的声音开始播放、或距上次锚定过久时，为有声窗口安排重新锚定。
+  maintainAnchor() {
+    const v = this.video;
+    if (this.destroyed || !this.mp || this.retryTimer || this.reanchorTimer) return;
+    if (!this.pageVisible || !this.isAudible() || v.paused || v.seeking || v.readyState < 2) return;
+    const now = Date.now();
+    if (now - this.lastReanchorAt < REANCHOR_COOLDOWN_MS) return;
+    const breakPassed = this.pendingReanchorAt != null && v.currentTime >= this.pendingReanchorAt + REANCHOR_SETTLE_SECONDS;
+    if (breakPassed) this.scheduleReanchor('音频时间线切换后重新锚定');
+    else if (now - this.lastAnchorAt >= REANCHOR_INTERVAL_MS) this.scheduleReanchor('定期重新锚定音画时钟');
+  }
+
+  // 只在播放即将到达关键帧时 seek 到该关键帧：Chrome 从关键帧起解码，无需预滚。
+  // 落在非关键帧会先解码整个 GOP 才恢复，多路负载下画面和声音会一起停住数秒。
+  scheduleReanchor(reason) {
+    const current = this.video.currentTime;
+    const keyframe = this.keyframeTimes.find((time) => time > current + 0.05);
+    // 下一个关键帧还没收到：下一秒再看，绝不退回到非关键帧 seek。
+    if (keyframe == null) return;
+    const mp = this.mp;
+    this.reanchorTimer = setTimeout(() => {
+      this.reanchorTimer = 0;
+      const v = this.video;
+      if (this.mp !== mp || this.destroyed || v.paused || v.seeking || !this.isAudible()) return;
+      // 定时器可能早到或晚到；只在关键帧附近 seek（回退到刚过的关键帧同样无需预滚），否则等下一个。
+      if (Math.abs(keyframe - v.currentTime) > REANCHOR_TOLERANCE_SECONDS) return;
+      if (this.bufferedAfter(keyframe) < REANCHOR_MIN_BUFFER_SECONDS) return;
+      this.reanchor(keyframe + 0.001, reason);
+    }, Math.max(0, (keyframe - current) * 1000 - REANCHOR_LEAD_MS));
+  }
+
+  // time 所在缓冲区间在 time 之后还有多少秒数据。
+  bufferedAfter(time) {
+    const ranges = this.video.buffered;
+    try {
+      for (let i = 0; i < (ranges?.length || 0); i++) {
+        if (time >= ranges.start(i) && time < ranges.end(i)) return ranges.end(i) - time;
+      }
+    } catch {}
+    return 0;
+  }
+
+  reanchor(target, reason) {
+    const now = Date.now();
+    this.lastReanchorAt = now;
+    this.lastAnchorAt = now;
+    this.lastRecoveryAt = now;
+    this.pendingReanchorAt = null;
+    this.reanchorCount++;
+    this.recoveryCount++;
+    this.lastRecoveryReason = reason;
+    this.recordSyncEvent('reanchor', reason);
+    try {
+      this.video.currentTime = target;
+    } catch {}
+    this.resetFrameSamples();
+  }
+
+  // 音频缓冲尾部减视频缓冲尾部；> 0 表示视频时间戳被前移（画面领先声音）。
+  trackSkew() {
+    const buffers = this.mp?._player_engine?._mse_controller?._sourceBuffers;
+    const end = (sb) => {
+      try {
+        const ranges = sb?.buffered;
+        return ranges?.length ? ranges.end(ranges.length - 1) : null;
+      } catch {
+        return null;
+      }
+    };
+    const audio = end(buffers?.audio);
+    const video = end(buffers?.video);
+    return audio == null || video == null ? null : audio - video;
   }
 
   sampleSync() {
-    const v = this.video;
-    if (!this.audioContext || v.paused || v.readyState < 2) return;
-    if (this.audioContext.state === 'suspended') this.audioContext.resume().catch(() => {});
-    const now = this.audioContext.currentTime;
-    if (!this.audioClockAnchor) {
-      this.audioClockAnchor = { audio: now, media: v.currentTime };
-      this.syncStatus = 'normal';
-      return;
-    }
-    const offset = v.currentTime - (this.audioClockAnchor.media + now - this.audioClockAnchor.audio);
-    this.syncOffsetSeconds = Number.isFinite(offset) ? offset : null;
+    if (this.destroyed || !this.mp || this.retryTimer || this.video.readyState < 2) return;
+    if (Date.now() < this.syncAfter) return;
+    const skew = this.trackSkew();
+    if (!Number.isFinite(skew)) return;
+    this.syncTrackSkewSeconds = skew;
     this.syncSamples++;
+    // 编码端音视频交错会带来固定差值，取开播初期的中位数作基线，只追踪之后的漂移。
+    if (this.syncBaselineSeconds == null) {
+      this.syncBaselineSamples.push(skew);
+      if (this.syncBaselineSamples.length < SYNC_BASELINE_SAMPLES) return;
+      const sorted = [...this.syncBaselineSamples].sort((a, b) => a - b);
+      this.syncBaselineSeconds = sorted[Math.floor(sorted.length / 2)];
+      this.syncBaselineSamples = [];
+      this.recordSyncEvent('sync-baseline', `${(this.syncBaselineSeconds * 1000).toFixed(0)}ms`);
+    }
+    const offset = skew - this.syncBaselineSeconds;
     const magnitude = Math.abs(offset);
-    this.syncStatus = magnitude >= SYNC_WARN_SECONDS ? (offset > 0 ? 'audio-leading' : 'video-leading') : 'normal';
-    if (magnitude >= SYNC_WARN_SECONDS) {
-      if (!this.syncAnomalySince) this.syncAnomalySince = Date.now();
-      if (Date.now() - this.syncAnomalySince > 1000) this.recordSyncEvent('sync-anomaly', `${offset.toFixed(3)}s`);
-      if (magnitude >= SYNC_HARD_SECONDS && Date.now() - this.syncCorrectionAt > 15000) {
-        if (this.alignRecoveredMedia()) {
-          this.syncCorrectionAt = Date.now();
-          this.recordSyncEvent('sync-correction', '追到共同缓冲尾部');
-        }
-      }
-    } else this.syncAnomalySince = 0;
+    this.syncOffsetSeconds = offset;
+    this.syncStatus = magnitude < SYNC_WARN_SECONDS ? 'normal' : offset > 0 ? 'video-leading' : 'audio-leading';
+    // 追加未完成时两个缓冲尾部会短暂错开，要求连续多次超阈值才判定为漂移。
+    this.syncDriftSamples = magnitude >= SYNC_REBUILD_SECONDS ? this.syncDriftSamples + 1 : 0;
+    if (this.syncDriftSamples < SYNC_REBUILD_SAMPLES) return;
+    const now = Date.now();
+    if (now - this.lastSyncRebuildAt < SYNC_REBUILD_COOLDOWN_MS) return;
+    this.lastSyncRebuildAt = now;
+    this.lastRecoveryAt = now;
+    this.syncRebuildCount++;
+    this.recoveryCount++;
+    this.lastRecoveryReason = `音画偏差 ${(offset * 1000).toFixed(0)}ms，重建播放器`;
+    this.recordSyncEvent('sync-rebuild', `${(offset * 1000).toFixed(0)}ms`);
+    this.fail(this.lastRecoveryReason, { force: true });
   }
-
   startSyncMonitor() {
     clearInterval(this.syncTimer);
-    this.syncTimer = setInterval(() => this.sampleSync(), SYNC_OBSERVE_MS);
+    this.syncTimer = setInterval(() => {
+      this.sampleSync();
+      this.maintainAnchor();
+    }, SYNC_OBSERVE_MS);
+  }
+
+  // lag > 0 表示画面落后于媒体时钟（声音领先）。
+  recordRenderLag(lag) {
+    this.renderLagSamples.push(lag);
+    if (this.renderLagSamples.length > RENDER_LAG_WINDOW) this.renderLagSamples.shift();
+    if (this.renderLagSamples.length < RENDER_LAG_WINDOW) return;
+    const sorted = [...this.renderLagSamples].sort((a, b) => a - b);
+    // 仅用于诊断：解码跟不上时原地 seek 要先预滚整个 GOP，会让播放停住数秒，得不偿失；
+    // 大幅落后仍由帧异常恢复兜底。
+    this.renderLagSeconds = sorted[Math.floor(sorted.length / 2)];
   }
 
   startFrameMonitor() {
@@ -334,6 +515,9 @@ export class Player {
         // 这是呈现时间线偏差线索，并非音频输出时间戳或精确音画差。
         this.frameSkewSeconds = Number.isFinite(metadata.mediaTime)
           ? Math.abs(this.video.currentTime - metadata.mediaTime) : null;
+        if (now >= this.sampleAfter && Number.isFinite(metadata.mediaTime)) {
+          this.recordRenderLag(this.video.currentTime - metadata.mediaTime);
+        }
       }
       this.frameCallback = this.video.requestVideoFrameCallback(sample);
     };
@@ -566,12 +750,6 @@ export class Player {
     this.emit(state, message);
   }
 
-  enableAudioClock() {
-    this.ensureAudioClock();
-    if (this.audioContext?.state === 'suspended') this.audioContext.resume().catch(() => {});
-    this.startSyncMonitor();
-  }
-
   diagnostics() {
     const quality = this.video.getVideoPlaybackQuality?.();
     const bufferSeconds = this.liveLatency();
@@ -594,7 +772,14 @@ export class Player {
       totalFrames: quality?.totalVideoFrames || 0,
       droppedFrames: quality?.droppedVideoFrames || 0,
       currentTime: this.video.currentTime || 0,
-      syncStatus: this.audioContext ? this.syncStatus : 'unmeasurable',
+      syncStatus: this.syncStatus,
+      syncTrackSkewSeconds: this.syncTrackSkewSeconds,
+      syncBaselineSeconds: this.syncBaselineSeconds,
+      syncRebuildCount: this.syncRebuildCount,
+      renderLagSeconds: this.renderLagSeconds,
+      reanchorCount: this.reanchorCount,
+      audioConfigChanges: this.audioConfigChanges,
+      audioGapMs: this.audioGapMs,
       syncOffsetSeconds: this.syncOffsetSeconds,
       syncSamples: this.syncSamples,
       syncEvents: this.syncEvents.slice(-8),
@@ -611,7 +796,7 @@ export class Player {
     clearInterval(this.watchdog);
     clearInterval(this.syncTimer);
     this.syncTimer = 0;
-    this.audioClockAnchor = null;
+    this.resetSyncSamples();
     clearTimeout(this.retryTimer);
     this.retryTimer = 0;
     this.loadController?.abort();
@@ -645,9 +830,5 @@ export class Player {
     this.destroyed = true;
     this.generation++;
     this.teardown();
-    this.audioSource?.disconnect();
-    this.audioContext?.close().catch(() => {});
-    this.audioSource = null;
-    this.audioContext = null;
   }
 }

@@ -159,6 +159,8 @@ function writeStoredState() {
       toast('配置保存失败；当前修改仅在本页有效', 5000, true);
     }
   }
+  // 删除房间、切换/导入/删除方案等都会经过保存，在此统一同步后台提醒列表。
+  syncExtensionReminders();
 }
 
 function flushSave({ snapshot = true } = {}) {
@@ -392,12 +394,16 @@ function handleRoomLiveTransition(room, previousLive, nextLive) {
   const title = room.s.title || room.s.nickname || `房间 ${room.s.rid}`;
   toast(`${title} 已开播`);
   const extensionRuntime = globalThis.chrome?.runtime;
-  if (document.hidden && extensionRuntime?.id) {
-    extensionRuntime.sendMessage({
-      type: 'douyu-notification',
-      rid: String(room.s.rid),
-      title,
-    });
+  if (extensionRuntime?.id) {
+    // 页面可见时也上报，让后台记下已开播，避免后台轮询再补发一次系统通知。
+    try {
+      Promise.resolve(extensionRuntime.sendMessage({
+        type: 'douyu-notification',
+        rid: String(room.s.rid),
+        title,
+        show: document.hidden,
+      })).catch(() => {});
+    } catch {}
   } else if (document.hidden && globalThis.Notification?.permission === 'granted') {
     const notification = new Notification('斗鱼直播已开播', {
       body: `${title}（房间 ${room.s.rid}）`,
@@ -418,7 +424,6 @@ async function toggleRoomNotification(room) {
   syncSidebarRoom(room);
   save({ immediate: true });
   toast(room.s.notifyOnLive ? '已开启开播提醒' : '已关闭开播提醒');
-  syncExtensionReminders();
   const isExtension = !!globalThis.chrome?.runtime?.id;
   if (!isExtension && room.s.notifyOnLive && globalThis.Notification?.permission === 'default') {
     try {
@@ -427,10 +432,31 @@ async function toggleRoomNotification(room) {
   }
 }
 
+let lastSyncedReminders = '';
+// 后台按整表替换提醒列表，所以必须汇总所有观看方案，而不只是当前方案。
 function syncExtensionReminders() {
   const runtime = globalThis.chrome?.runtime;
   if (!runtime?.id) return;
-  const roomsToWatch = Object.fromEntries(rooms.filter((room) => room.s.notifyOnLive).map((room) => [String(room.s.rid), { title: room.s.title || room.s.nickname || `房间 ${room.s.rid}`, avatar: room.s.avatar || '', live: room.live === true }]));
+  const roomsToWatch = {};
+  const watch = (state, live = null) => {
+    if (!state?.notifyOnLive) return;
+    const rid = String(state.rid);
+    const known = roomsToWatch[rid]?.live;
+    roomsToWatch[rid] = {
+      title: state.title || state.nickname || `房间 ${rid}`,
+      avatar: state.avatar || '',
+      // 未检测到状态时传 null，后台会先记录基线，不会误判为“未开播→开播”。
+      live: typeof live === 'boolean' ? live : known ?? null,
+    };
+  };
+  const current = activeWorkspace();
+  for (const workspace of appState.workspaces) {
+    if (workspace !== current) workspace.rooms.forEach((state) => watch(state));
+  }
+  rooms.forEach((room) => watch(room.s, room.live));
+  const payload = JSON.stringify(roomsToWatch);
+  if (payload === lastSyncedReminders) return;
+  lastSyncedReminders = payload;
   try { Promise.resolve(runtime.sendMessage({ type: 'douyu-sync-reminders', rooms: roomsToWatch })).catch(() => {}); } catch {}
 }
 
@@ -1560,7 +1586,7 @@ function renderDiagnostics() {
       item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知',
       `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
       `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
-      `音画同步 ${item.syncStatus === 'audio-leading' ? '声音领先' : item.syncStatus === 'video-leading' ? '画面领先' : item.syncStatus === 'normal' ? '正常' : '无法测量'}${item.syncOffsetSeconds == null ? '' : ` (${(item.syncOffsetSeconds * 1000).toFixed(0)}ms)`}`,
+      `音画同步 ${item.syncStatus === 'audio-leading' ? '声音领先' : item.syncStatus === 'video-leading' ? '画面领先' : item.syncStatus === 'normal' ? '正常' : '无法测量'}${item.syncOffsetSeconds == null ? '' : ` (${(item.syncOffsetSeconds * 1000).toFixed(0)}ms)`}${item.syncRebuildCount ? ` · 偏差重建 ${item.syncRebuildCount} 次` : ""}${item.renderLagSeconds == null ? "" : ` · 画面滞后 ${(item.renderLagSeconds * 1000).toFixed(0)}ms`}${item.reanchorCount ? ` · 重新锚定 ${item.reanchorCount} 次` : ""}${item.audioConfigChanges ? ` · 音频配置切换 ${item.audioConfigChanges} 次` : ""}${item.audioGapMs ? ` · 音频断档 ${Math.round(item.audioGapMs)}ms` : ""}`,
       item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
       item.visibilityRecoveryCount ? `切页追帧 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页追帧',
       item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
@@ -1587,7 +1613,7 @@ function diagnosticsText() {
       `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
       `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
       `visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +
-      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
+      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncRebuilds=${item.syncRebuildCount || 0} | renderLag=${item.renderLagSeconds == null ? "unknown" : item.renderLagSeconds.toFixed(3)}s | reanchors=${item.reanchorCount || 0} | audioConfigChanges=${item.audioConfigChanges || 0} | audioGapMs=${Math.round(item.audioGapMs || 0)} | syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
       `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
       (item.lastError ? ` | error=${item.lastError}` : '')
     ),
