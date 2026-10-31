@@ -263,7 +263,8 @@ export class Tile {
     return j.stream.url;
   }
 
-  async load() {
+  // reason 记入播放器诊断，用来区分手动重载、开播通知、切清晰度等来源。
+  async load(reason = 'initial') {
     const seq = ++this.loadSeq;
     this.loadController?.abort();
     const controller = new AbortController();
@@ -288,7 +289,7 @@ export class Tile {
       this.fillRates(j.stream.rates, j.stream.rate);
       this.hideOverlay();
       // /api/resolve 已给出有效流地址，首播直接使用，避免紧接着再签一次 /api/stream。
-      this.player.reload({ initialUrl: j.stream.url, signal: controller.signal });
+      this.player.reload({ initialUrl: j.stream.url, signal: controller.signal, reason });
     } catch (e) {
       if (isAbortError(e)) return;
       if (this.destroyed || seq !== this.loadSeq) return;
@@ -341,7 +342,7 @@ export class Tile {
       this.loadSeq++;
       this.loadController?.abort();
     }
-    this.player.stop();
+    this.player.stop('offline');
     this.player.setExternalState('offline', message);
     this.setStatus('未开播', 'err');
     this.showOverlay(message || '主播未开播');
@@ -353,7 +354,7 @@ export class Tile {
     this.updateRoomInfo(info);
     this.setRoomLive(info.live);
     // 弹幕的 rss 事件并不保证每次都能收到，用房间接口兜底开/关播变化。
-    if (info.live && wasLive === false && !this.ecoSuspended) this.load();
+    if (info.live && wasLive === false && !this.ecoSuspended) this.load('live-poll');
     else if (!info.live && wasLive !== false) this.showOffline(undefined, { cancelLoad: true });
   }
 
@@ -395,7 +396,7 @@ export class Tile {
         if (e.type !== 'live') return;
         const changed = this.setRoomLive(e.live);
         if (!changed) return;
-        if (e.live) this.load();
+        if (e.live) this.load('live-notice');
         else this.showOffline(undefined, { cancelLoad: true });
       },
     });
@@ -654,7 +655,7 @@ export class Tile {
   async setRate(rate) {
     this.s.rate = rate;
     this.onChange();
-    this.player.reload();
+    this.player.reload({ reason: 'rate' });
   }
 
   setRateByName(name) {
@@ -685,14 +686,14 @@ export class Tile {
     this.ecoSuspended = false;
     this.el.classList.remove('eco-suspended');
     this.hideOverlay();
-    this.load();
+    this.load('manual');
   }
 
   suspendForEco() {
     if (this.destroyed || this.ecoSuspended || this.isPictureInPicture()) return;
     this.ecoSuspended = true;
     this.loadController?.abort();
-    this.player.stop();
+    this.player.stop('eco');
     this.player.setExternalState('suspended', '已节能暂停');
     this.dm?.close();
     this.dm = null;
@@ -710,7 +711,7 @@ export class Tile {
     this.ecoSuspended = false;
     this.el.classList.remove('eco-suspended');
     this.renderer.setActive(this.visible && !document.hidden);
-    this.load();
+    this.load('eco-resume');
   }
 
   isPictureInPicture() {

@@ -1613,7 +1613,7 @@ function diagnosticsText() {
       `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
       `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
       `visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +
-      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncRebuilds=${item.syncRebuildCount || 0} | renderLag=${item.renderLagSeconds == null ? "unknown" : item.renderLagSeconds.toFixed(3)}s | reanchors=${item.reanchorCount || 0} | audioConfigChanges=${item.audioConfigChanges || 0} | audioGapMs=${Math.round(item.audioGapMs || 0)} | syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
+      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncRebuilds=${item.syncRebuildCount || 0} | renderLag=${item.renderLagSeconds == null ? "unknown" : item.renderLagSeconds.toFixed(3)}s | reanchors=${item.reanchorCount || 0} | audioConfigChanges=${item.audioConfigChanges || 0} | audioGapMs=${Math.round(item.audioGapMs || 0)} | videoFps=${item.videoFps ?? 'unknown'} | silentAacDropped=${item.silentAacDropped || 0} |syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
       `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
       (item.lastError ? ` | error=${item.lastError}` : '')
     ),
@@ -1722,7 +1722,7 @@ function toggleDanmakuAll() {
 }
 
 function reloadAll() {
-  tiles.forEach((tile) => tile.load());
+  tiles.forEach((tile) => tile.load('reload-all'));
 }
 
 $('colsSelect').addEventListener('change', (event) => {

@@ -1,3 +1,5 @@
+import { FlvAudioFilter } from './flv-audio-filter.js';
+
 // mpegts customLoader 接口：直播连接必须立即取消，不能等待下一个网络块。
 const IDLE = 0, CONNECTING = 1, BUFFERING = 2, ERROR = 3;
 
@@ -56,8 +58,8 @@ export class LiveStreamLoader {
       if (response.url && response.url !== seek.url) {
         this.onURLRedirect?.(this.seekHandler.removeURLParameters(response.url));
       }
-      const length = Number(response.headers.get('Content-Length'));
-      if (length > 0) this.onContentLengthKnown?.(length);
+      // 过滤会改变字节数，内容长度不再准确；直播流本来也没有。
+      const filter = new FlvAudioFilter();
       while (!controller.signal.aborted) {
         const { done, value } = await reader.read();
         if (controller.signal.aborted) return;
@@ -68,8 +70,11 @@ export class LiveStreamLoader {
           return;
         }
         this.status = BUFFERING;
-        const chunk = value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
-          ? value.buffer : value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        const kept = filter.push(value);
+        if (this.config.audioFilterStats) this.config.audioFilterStats.dropped = filter.dropped;
+        if (!kept.length) continue;
+        const chunk = kept.byteOffset === 0 && kept.byteLength === kept.buffer.byteLength
+          ? kept.buffer : kept.buffer.slice(kept.byteOffset, kept.byteOffset + kept.byteLength);
         const start = range.from + received;
         received += chunk.byteLength;
         this.onDataArrival?.(chunk, start, received);

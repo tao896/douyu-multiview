@@ -165,6 +165,7 @@ export class Player {
     this.pageHiddenAt = this.pageVisible ? 0 : Date.now();
     this.online = navigator.onLine !== false;
     this.waitingForOnline = false;
+    this.waitingForVisible = false;
     this.state = 'offline';
     this.lastError = '';
     this.frameVisible = true;
@@ -197,9 +198,23 @@ export class Player {
     this.onProgress = () => {
       if (this.pendingAlignment && this.alignRecoveredMedia()) this.pendingAlignment = false;
     };
+    // 缓冲耗尽和开关声音都可能与不同步有关，记入诊断时间线。
+    this.onWaiting = () => {
+      if (this.mp && !this.destroyed) this.recordSyncEvent('waiting');
+    };
+    this.lastMuted = video.muted;
+    this.onVolumeChange = () => {
+      if (video.muted === this.lastMuted) return;
+      this.lastMuted = video.muted;
+      this.recordSyncEvent(video.muted ? 'audio-off' : 'audio-on');
+      // 静音期间不做定期重新锚定；开声后在下一个关键帧重新对齐，避免带着静音期累积的偏移出声。
+      if (!video.muted && this.mp) this.pendingReanchorAt = video.currentTime;
+    };
     video.addEventListener('seeking', this.onSeeking);
     video.addEventListener('progress', this.onProgress);
     video.addEventListener('loadeddata', this.onProgress);
+    video.addEventListener('waiting', this.onWaiting);
+    video.addEventListener('volumechange', this.onVolumeChange);
     this.resetFrameSamples();
   }
 
@@ -209,7 +224,8 @@ export class Player {
     this.onState({ state, message, retry: this.retry });
   }
 
-  async load({ initialUrl, signal } = {}) {
+  // reason 标明是谁触发了加载（窗口层传入）；播放器自身的出错重连不传，记为 reconnect。
+  async load({ initialUrl, signal, reason } = {}) {
     if (this.destroyed) return;
     const generation = ++this.generation;
     this.loading = true;
@@ -217,6 +233,8 @@ export class Player {
     const wasMuted = this.video.muted;
     const wasVolume = this.video.volume;
     this.teardown();
+    this.waitingForVisible = false;
+    const loadReason = reason || (recovering ? 'reconnect' : 'initial');
     const controller = new AbortController();
     this.loadController = controller;
     const onAbort = () => controller.abort(signal?.reason);
@@ -226,10 +244,17 @@ export class Player {
     try {
       const url = initialUrl || await this.getUrl({ signal: controller.signal });
       if (this.destroyed || generation !== this.generation || controller.signal.aborted) return;
+      // 记下 CDN 节点，便于和官网所用线路、出问题的连接对照。
+      let host = '';
+      try { host = new URL(url).host; } catch {}
+      this.recordSyncEvent('load', host ? `${loadReason} ${host}` : loadReason);
       if (!window.mpegts?.isSupported()) throw new Error('当前浏览器不支持 MSE 播放');
 
       configureLogging(window.mpegts);
-      const mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, CONFIG);
+      // 每条连接单独统计加载器去掉的无声 AAC 帧。
+      this.audioFilterStats = { dropped: 0 };
+      this.silentAacReported = false;
+      const mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, { ...CONFIG, audioFilterStats: this.audioFilterStats });
       this.mp = mp;
       this.pendingAlignment = recovering;
       this.startFrameMonitor();
@@ -250,6 +275,11 @@ export class Player {
         this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
             force: httpFailure || detail === 'MediaMSEError' || detail === 'Exception' || isEarlyEofError(type, detail),
         });
+      });
+      // 流中途再次出现 onMetaData，通常说明 CDN 重连了上游；拼接处音视频可能已经错开。
+      let metadataCount = 0;
+      mp.on(mpegts.Events.METADATA_ARRIVED, () => {
+        if (this.mp === mp && ++metadataCount > 1) this.recordSyncEvent('metadata-repeat', `#${metadataCount}`);
       });
       mp.on(mpegts.Events.MEDIA_INFO, () => {
         if (this.mp !== mp) return;
@@ -298,9 +328,11 @@ export class Player {
     this.renderLagSeconds = null;
   }
 
+  // ct 为事件发生时的播放位置，便于和用户发现不同步的时刻对照。
   recordSyncEvent(type, detail = '') {
-    this.syncEvents.push({ type, detail, at: new Date().toISOString() });
-    if (this.syncEvents.length > 30) this.syncEvents.shift();
+    const ct = Number.isFinite(this.video.currentTime) ? Number(this.video.currentTime.toFixed(2)) : null;
+    this.syncEvents.push({ type, detail, at: new Date().toISOString(), ct });
+    if (this.syncEvents.length > 40) this.syncEvents.shift();
   }
 
   // 每条新流（新 remuxer）都重新建立基线。
@@ -316,6 +348,9 @@ export class Player {
     clearTimeout(this.reanchorTimer);
     this.reanchorTimer = 0;
     this.audioInitSeen = false;
+    this.videoInitSeen = false;
+    this.fpsWindow = null;
+    this.videoFps = null;
     this.audioEndDts = null;
     this.pendingReanchorAt = null;
     this.keyframeTimes = [];
@@ -342,6 +377,10 @@ export class Player {
         }
         this.audioInitSeen = true;
       }
+      if (this.mp === mp && !replay && segment?.type === 'video') {
+        if (this.videoInitSeen) this.recordSyncEvent('video-config-change');
+        this.videoInitSeen = true;
+      }
       return appendInit.call(mse, segment, replay);
     };
     mse.appendMediaSegment = (segment) => {
@@ -358,6 +397,7 @@ export class Player {
         if (Number.isFinite(point?.pts)) this.keyframeTimes.push(point.pts / 1000);
       }
       if (this.keyframeTimes.length > 30) this.keyframeTimes.splice(0, this.keyframeTimes.length - 30);
+      this.trackVideoFps(info, segment.sampleCount);
       return;
     }
     if (segment.type !== 'audio' || !Number.isFinite(info.beginDts) || !Number.isFinite(info.endDts)) return;
@@ -373,6 +413,21 @@ export class Player {
     this.audioEndDts = info.endDts;
   }
 
+  // 按 10 秒窗口统计实际收到的视频帧率。同一路流曾出现过 30/60 帧两种编码并存，
+  // 记录下来以便判断不同步的连接是否拿到了另一种编码。
+  trackVideoFps(info, samples) {
+    if (!Number.isFinite(info.beginDts) || !Number.isFinite(info.endDts) || !samples) return;
+    this.fpsWindow ??= { start: info.beginDts, frames: 0 };
+    this.fpsWindow.frames += samples;
+    const span = info.endDts - this.fpsWindow.start;
+    if (span < 10_000) return;
+    const fps = Math.round(this.fpsWindow.frames * 1000 / span);
+    if (this.videoFps == null) this.recordSyncEvent('video-fps', String(fps));
+    else if (Math.abs(fps - this.videoFps) > 5) this.recordSyncEvent('video-fps-change', `${this.videoFps}→${fps}`);
+    this.videoFps = fps;
+    this.fpsWindow = null;
+  }
+
   // 由同步定时器每秒调用：断点之后的声音开始播放、或距上次锚定过久时，为有声窗口安排重新锚定。
   maintainAnchor() {
     const v = this.video;
@@ -381,7 +436,7 @@ export class Player {
     const now = Date.now();
     if (now - this.lastReanchorAt < REANCHOR_COOLDOWN_MS) return;
     const breakPassed = this.pendingReanchorAt != null && v.currentTime >= this.pendingReanchorAt + REANCHOR_SETTLE_SECONDS;
-    if (breakPassed) this.scheduleReanchor('音频时间线切换后重新锚定');
+    if (breakPassed) this.scheduleReanchor('音频时间线切换或开声后重新锚定');
     else if (now - this.lastAnchorAt >= REANCHOR_INTERVAL_MS) this.scheduleReanchor('定期重新锚定音画时钟');
   }
 
@@ -483,6 +538,10 @@ export class Player {
   startSyncMonitor() {
     clearInterval(this.syncTimer);
     this.syncTimer = setInterval(() => {
+      if (!this.silentAacReported && this.audioFilterStats?.dropped > 0) {
+        this.silentAacReported = true;
+        this.recordSyncEvent('silent-aac-filtered', '流中含无声 AAC 帧，已在送入 mpegts 前去掉');
+      }
       this.sampleSync();
       this.maintainAnchor();
     }, SYNC_OBSERVE_MS);
@@ -571,6 +630,7 @@ export class Player {
     this.staleLatencySamples = 0;
     if (this.recoveryStage === 0 && this.alignRecoveredMedia()) {
       this.recoveryStage = 1;
+      this.recordSyncEvent('catch-up', this.lastRecoveryReason);
     } else {
       this.recoveryStage = 0;
       this.fail(this.lastRecoveryReason, { force: true });
@@ -598,6 +658,12 @@ export class Player {
     this.lastMove = Date.now();
     this.watchdog = setInterval(() => {
       if (this.destroyed || !this.mp) return;
+      // 页面在后台时 Chrome 会暂停静音视频，重连后的新流也会立刻被暂停。
+      // 此时断开下载、等页面回到前台再连，而不是每 30 秒重连一次。
+      if (!this.pageVisible && this.video.paused && this.liveLatency() > MAX_FORWARD_BUFFER_SECONDS) {
+        this.suspendUntilVisible();
+        return;
+      }
       // 后向清理无法释放尚未播放的内容；后台、暂停及解码卡死也必须检查。
       if (this.liveLatency() > MAX_FORWARD_BUFFER_SECONDS) {
         this.fail('未播放缓冲超过 30 秒，释放流后重连', { force: true });
@@ -664,6 +730,7 @@ export class Player {
     // 强制恢复时立即停止下载，不在退避期间继续积压数据。
     if (force) this.teardown();
     this.retryForce = force;
+    this.recordSyncEvent('retry', reason);
     this.emit('retrying', `${reason}，${Math.round(delay / 1000)}s 后重连`);
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
@@ -688,7 +755,9 @@ export class Player {
     return this.load(options);
   }
 
-  stop() {
+  stop(reason = '') {
+    if (this.mp || this.loading) this.recordSyncEvent('stop', reason);
+    this.waitingForVisible = false;
     this.generation++;
     this.retry = 0;
     this.retryForce = false;
@@ -708,12 +777,20 @@ export class Player {
       this.pageVisible = false;
       this.pageHiddenAt = Date.now();
       this.resetFrameSamples();
+      this.recordSyncEvent('page-hidden');
       return;
     }
 
+    this.recordSyncEvent('page-visible', `${Math.round((Date.now() - this.pageHiddenAt) / 1000)}s`);
     this.pageVisible = true;
     this.pageHiddenAt = 0;
     this.resetFrameSamples();
+    if (this.waitingForVisible) {
+      this.waitingForVisible = false;
+      this.retry = 0;
+      this.load({ reason: 'page-visible' });
+      return;
+    }
     if (!this.mp || this.retryTimer || this.waitingForOnline) return;
     if (this.video.paused && this.video.readyState >= 2) {
       this.video.play().catch(() => {});
@@ -724,11 +801,19 @@ export class Player {
         this.visibilityRecoveryCount++;
         this.lastVisibilityRecoveryAt = Date.now();
         this.lastVisibilityRecoveryReason = '切回页面后追到最新缓冲位置';
+        this.recordSyncEvent('catch-up', this.lastVisibilityRecoveryReason);
       }
     }
     this.lastTime = this.video.currentTime;
     this.lastMove = Date.now();
     this.startWatchdog();
+  }
+
+  suspendUntilVisible() {
+    this.recordSyncEvent('stop', 'hidden-paused');
+    this.teardown();
+    this.waitingForVisible = true;
+    this.emit('suspended', '页面在后台，回到页面后自动恢复');
   }
 
   setOnline(online) {
@@ -774,9 +859,11 @@ export class Player {
       reanchorCount: this.reanchorCount,
       audioConfigChanges: this.audioConfigChanges,
       audioGapMs: this.audioGapMs,
+      videoFps: this.videoFps,
+      silentAacDropped: this.audioFilterStats?.dropped || 0,
       syncOffsetSeconds: this.syncOffsetSeconds,
       syncSamples: this.syncSamples,
-      syncEvents: this.syncEvents.slice(-8),
+      syncEvents: this.syncEvents.slice(-30),
     };
   }
 
@@ -786,6 +873,8 @@ export class Player {
     if (this.frameCallback !== null) this.video.cancelVideoFrameCallback?.(this.frameCallback);
     this.frameCallback = null;
     this.pendingAlignment = false;
+    // 升级阶段只对同一条连接有意义；新连接开头的 GOP 缓存积压应先正常追帧。
+    this.recoveryStage = 0;
     this.resetFrameSamples();
     clearInterval(this.watchdog);
     clearInterval(this.syncTimer);
@@ -821,6 +910,8 @@ export class Player {
     this.video.removeEventListener('seeking', this.onSeeking);
     this.video.removeEventListener('progress', this.onProgress);
     this.video.removeEventListener('loadeddata', this.onProgress);
+    this.video.removeEventListener('waiting', this.onWaiting);
+    this.video.removeEventListener('volumechange', this.onVolumeChange);
     this.destroyed = true;
     this.generation++;
     this.teardown();
