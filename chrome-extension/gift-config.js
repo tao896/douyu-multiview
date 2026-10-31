@@ -129,7 +129,49 @@ export async function loadGiftConfig() {
   return merged;
 }
 
+const PROP_TTL = 8 * 60 * 60 * 1000;
+const PROP_RETRY = 60_000;
+const propSources = new Map();
+
+export function parseProp(payload) {
+  const prop = payload?.data;
+  if (!prop?.name) return null;
+  const prefix = /^https?:\/\//i.test(prop.picUrlPrefix || '') ? prop.picUrlPrefix : 'https://gfs-op.douyucdn.cn/dygift';
+  const path = [prop.focusPic, prop.propPic, prop.chatPic].find((url) => typeof url === 'string' && url) || '';
+  const exp = Number(prop.exp);
+  return {
+    name: prop.name,
+    image: !path || /^https?:\/\//i.test(path) ? path : `${prefix}${path}`,
+    exp: Number.isFinite(exp) && exp >= 0 ? exp : null,
+  };
+}
+
+// 背包道具按 pid 单独查询；失败的结果短暂缓存，避免连击时每条弹幕都重新请求。
+function loadPropConfig(pid) {
+  const key = String(pid || '').trim();
+  if (!/^\d{1,12}$/.test(key)) return Promise.resolve(null);
+  const previous = propSources.get(key);
+  if (previous && Date.now() < previous.expires) return previous.promise;
+  const entry = { expires: Date.now() + PROP_TTL };
+  entry.promise = fetch(`https://gift.douyucdn.cn/api/prop/v1/web/single?pid=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(8000) })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return parseProp(await response.json());
+    })
+    .catch(() => {
+      entry.expires = Date.now() + PROP_RETRY;
+      return null;
+    });
+  propSources.set(key, entry);
+  return entry.promise;
+}
+
 export async function resolveGift(gift, rid = '') {
+  if (!gift.id && gift.propId) {
+    const prop = await loadPropConfig(gift.propId);
+    if (!prop) return gift;
+    return { ...gift, giftName: prop.name || gift.giftName, image: prop.image || gift.image || '', value: prop.exp == null ? gift.value : prop.exp / 10 };
+  }
   const [globalConfig, roomConfig] = await Promise.all([loadGiftConfig(), loadRoomGiftConfig(rid)]);
   const config = roomConfig.get(String(gift.id)) || globalConfig.get(String(gift.id));
   return { ...gift, giftName: config?.name || gift.giftName, image: config?.image || gift.image || '', value: config ? (config.exp == null ? null : config.exp / 10) : gift.value, meta: config?.svga ? { svga: config.svga, image: config.image || gift.image || '' } : undefined };

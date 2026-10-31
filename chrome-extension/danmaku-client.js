@@ -30,13 +30,17 @@ function parseFields(msg) {
 
 // 帧内字段作为配置缺失时的回退；名称和图标由礼物配置补全。
 export function giftFromFields(f) {
-  const id = String(f.gfid || f.giftid || f.gift_id || f.giftId || '').trim();
+  const rawId = String(f.gfid || f.giftid || f.gift_id || f.giftId || '').trim();
+  // 背包道具（陪伴印章、钻粉道具等）下发 gfid@=0，只能靠 pid 查道具配置
+  const id = rawId === '0' ? '' : rawId;
+  const pid = String(f.pid || '').trim();
+  const propId = !id && /^[1-9]\d{0,11}$/.test(pid) ? pid : '';
   const count = Math.max(1, Number(f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);
   const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
   const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
   const rawValueField = [f.gbc, f.gs, f.dhb, f.dms, f.gift_score, f.score].find((value) => value !== undefined && value !== '');
   const rawValue = Number(rawValueField);
-  return { id, giftName, image, count, value: Number.isFinite(rawValue) ? rawValue * count : null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
+  return { id, ...(propId && { propId }), giftName, image, count, value: Number.isFinite(rawValue) ? rawValue * count : null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
 }
 
 export class DanmakuClient {
