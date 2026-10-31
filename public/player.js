@@ -3,7 +3,6 @@ import { LiveStreamLoader } from './live-stream-loader.js';
 // mpegts.js 封装：FLV 直播播放 + 卡死自愈
 // 流地址带 wsAuth token 会过期，出错或长时间不推进就重新签名换地址
 const STALL_MS = 15_000;
-const MAX_RETRY = 6;
 const STABLE_PLAYBACK_MS = 30_000;
 const MAX_FORWARD_BUFFER_SECONDS = 30;
 const STALE_LATENCY_SECONDS = 3;
@@ -659,11 +658,6 @@ export class Player {
       return;
     }
     clearInterval(this.watchdog);
-    if (this.retry >= MAX_RETRY) {
-      this.teardown();
-      this.emit('error', `${reason}（已重试 ${this.retry} 次）`);
-      return;
-    }
     const baseDelay = Math.min(1500 * 2 ** this.retry, 20_000);
     const delay = Math.round(baseDelay * (0.8 + this.random() * 0.4));
     this.retry++;
