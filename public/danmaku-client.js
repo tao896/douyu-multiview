@@ -28,6 +28,25 @@ function parseFields(msg) {
   return out;
 }
 
+// 弹幕里的头像是 avatar_v3/202610/xxx 这样的相对路径
+export function avatarFromIc(ic) {
+  const value = unesc(ic).trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  return `https://apic.douyucdn.cn/upload/${value.replace(/^\/+/, '')}_small.jpg`;
+}
+
+const DIAMOND_FAN_IMAGE = 'https://shark2.douyucdn.cn/front-publish/live-player-aside-master/assets/images/diamonds_banner_logo_c077d7b.gif';
+// 开通/续费钻粉：新版协议是 dfobc/dfrbc，旧版是 odfbc/rndfbc
+export const DIAMOND_FAN_TYPES = { dfobc: '开通钻粉', odfbc: '开通钻粉', dfrbc: '续费钻粉', rndfbc: '续费钻粉' };
+
+export function diamondFanGift(type, f) {
+  const giftName = DIAMOND_FAN_TYPES[type];
+  if (!giftName) return null;
+  // 价值未知，不参与价值下限过滤；按名称过滤仍然生效
+  return { id: '', giftName, image: DIAMOND_FAN_IMAGE, count: 1, value: null, user: unesc(f.nick || f.nn || f.unk || '匿名用户'), avatar: avatarFromIc(f.icon || f.ic || f.uic) };
+}
+
 // 帧内字段作为配置缺失时的回退；名称和图标由礼物配置补全。
 export function giftFromFields(f) {
   const rawId = String(f.gfid || f.giftid || f.gift_id || f.giftId || '').trim();
@@ -39,7 +58,7 @@ export function giftFromFields(f) {
   const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
   const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
   // dgb 帧不带价格（gs 是展示样式，恒为 0），单价由礼物配置补全；未知时为 null，不参与价值过滤。
-  return { id, ...(propId && { propId }), giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
+  return { id, ...(propId && { propId }), giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: avatarFromIc(f.ic || f.avatar || f.useravatar) };
 }
 
 export class DanmakuClient {
@@ -141,6 +160,11 @@ export class DanmakuClient {
       if (type === 'dgb') {
         this.onGift(giftFromFields(f));
       }
+    } else if (DIAMOND_FAN_TYPES[type]) {
+      const f = parseFields(msg);
+      // 只显示本房间的开通/续费，其他房间的广播丢弃
+      const rid = f.rid && f.rid !== '0' ? f.rid : f.drid;
+      if (!rid || rid === this.rid) this.onGift(diamondFanGift(type, f));
     } else if (type === 'rss') {
       // 开播状态变化
       const f = parseFields(msg);
