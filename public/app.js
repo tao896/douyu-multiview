@@ -14,6 +14,7 @@ import {
   dropPositionForPoint,
   mapWithConcurrency,
   normalizeAppState,
+  normalizeGiftValueFilter,
   normalizeRoomState,
   parseBatchInput,
   parseBackup,
@@ -1230,8 +1231,7 @@ $('giftFilterBtn')?.addEventListener('click', () => {
 $('giftFilterForm')?.addEventListener('submit', (event) => {
   if (event.submitter?.value === 'cancel') return;
   giftNameFilter = $('giftNameFilter').value;
-  const parsedValue = Number($('giftValueFilter').value);
-  giftValueFilter = Number.isFinite(parsedValue) && parsedValue >= 0 && $('giftValueFilter').value !== '' ? parsedValue : null;
+  giftValueFilter = normalizeGiftValueFilter($('giftValueFilter').value);
   activeWorkspace().giftNameFilter = giftNameFilter;
   activeWorkspace().giftValueFilter = giftValueFilter;
   tiles.forEach((tile) => { tile.setGiftNameFilter(giftNameFilter); tile.setGiftValueFilter(giftValueFilter); });

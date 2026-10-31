@@ -6,6 +6,7 @@ import { DanmakuFilter } from './danmaku-filter.js';
 import { fetchJson, isAbortError } from './net.js';
 
 import { resolveGift } from './gift-config.js';
+import { normalizeGiftValueFilter } from './state.js';
 
 const FALLBACK_AVATAR = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" rx="16" fill="%233b5b86"/%3E%3Ccircle cx="16" cy="12" r="6" fill="%23d6e4f5"/%3E%3Cpath d="M5 30c2-10 20-10 22 0" fill="%23d6e4f5"/%3E%3C/svg%3E';
 const FALLBACK_GIFT = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Ccircle cx="16" cy="16" r="15" fill="%23f06"/%3E%3Cpath d="M5 20 13 12 18 17 24 8 29 25H5Z" fill="%23ffd66b"/%3E%3C/svg%3E';
@@ -523,8 +524,7 @@ export class Tile {
   }
 
   setGiftValueFilter(value) {
-    const parsed = Number(value);
-    this.giftValueFilter = Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    this.giftValueFilter = normalizeGiftValueFilter(value);
   }
 
   pushDanmaku(text, color) {

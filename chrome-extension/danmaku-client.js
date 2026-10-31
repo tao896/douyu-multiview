@@ -38,9 +38,8 @@ export function giftFromFields(f) {
   const count = Math.max(1, Number(f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);
   const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
   const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
-  const rawValueField = [f.gbc, f.gs, f.dhb, f.dms, f.gift_score, f.score].find((value) => value !== undefined && value !== '');
-  const rawValue = Number(rawValueField);
-  return { id, ...(propId && { propId }), giftName, image, count, value: Number.isFinite(rawValue) ? rawValue * count : null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
+  // dgb 帧不带价格（gs 是展示样式，恒为 0），单价由礼物配置补全；未知时为 null，不参与价值过滤。
+  return { id, ...(propId && { propId }), giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: unesc(f.ic || f.avatar || f.useravatar || '') };
 }
 
 export class DanmakuClient {

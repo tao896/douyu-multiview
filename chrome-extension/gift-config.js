@@ -6,6 +6,15 @@ export const GIFT_CONFIG_URLS = [
 const ROOM_GIFT_TTL = 8 * 60 * 60 * 1000;
 const roomSources = new Map();
 
+// 斗鱼各配置的标价以 1/100 鱼翅计（火箭 50000 = 500 鱼翅）；鱼丸礼物是免费货币，按 0 计。
+// 统一换算成单个礼物的鱼翅价格，未知时为 null，供“礼物价值下限”比较。
+function giftPrice(raw, { yuwan = false } = {}) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const price = Number(raw);
+  if (!Number.isFinite(price) || price < 0) return null;
+  return yuwan ? 0 : price / 100;
+}
+
 export function parseGiftConfig(text) {
   // The CDN serves JSONP even though these resources have a .json suffix.
   const json = text.trim().replace(/^DYConfigCallback\s*\(([\s\S]*)\)\s*;?$/, '$1');
@@ -17,19 +26,23 @@ export function parseGiftConfig(text) {
     const id = String(gift.id ?? key);
     const image = [gift.gift_pic, gift.cimg, gift.himg, gift.bimg]
       .find((url) => typeof url === 'string' && /^https?:\/\//i.test(url)) || '';
-    const exp = Number(gift.exp);
-    return [id, { name: gift.name || '', image, exp: Number.isFinite(exp) && exp >= 0 ? exp : null }];
+    // type 1 是鱼丸礼物；pc 缺失时 exp 约为 pc / 10
+    const price = giftPrice(gift.pc ?? (gift.exp == null ? null : Number(gift.exp) * 10), { yuwan: Number(gift.type) === 1 });
+    return [id, { name: gift.name || '', image, price }];
   }));
 }
 
 function giftRecord(id, gift = {}, { prefix = '' } = {}) {
   const image = [gift.gift_pic, gift.cimg, gift.himg, gift.bimg, gift.pic, gift.basicInfo?.focusPic]
     .find((url) => typeof url === 'string' && url) || '';
-  const price = Number(gift.exp ?? gift.pc ?? gift.priceInfo?.price);
+  const priceType = String(gift.priceInfo?.priceType ?? '').toUpperCase();
+  const price = gift.priceInfo
+    ? giftPrice(gift.priceInfo.price, { yuwan: priceType === 'YUWAN' })
+    : giftPrice(gift.pc, { yuwan: Number(gift.type) === 1 });
   return [String(gift.id ?? id), {
     name: gift.name || gift.n || '',
     image: image && /^https?:\/\//i.test(image) ? image : (image ? `${prefix}${image}` : ''),
-    exp: Number.isFinite(price) && price >= 0 ? price : null,
+    price,
     svga: gift.svga || gift.effect_icon || '',
   }];
 }
@@ -51,7 +64,7 @@ function parseActivityGift(text) {
   for (const item of data) {
     const gift = item?.awardInfo;
     if (!gift || [96, 103].includes(Number(gift.awardType))) continue;
-    const [id, value] = giftRecord(gift.cardId, { id: gift.cardId, name: gift.name, pic: gift.pic, pc: 1 });
+    const [id, value] = giftRecord(gift.cardId, { id: gift.cardId, name: gift.name, pic: gift.pic });
     map.set(id, value);
   }
   return map;
@@ -85,7 +98,7 @@ async function loadRoomGiftConfig(rid) {
     ]);
     const merged = new Map();
     for (const result of sources) if (result.status === 'fulfilled') {
-      for (const [id, gift] of result.value) merged.set(id, { ...merged.get(id), ...gift, name: gift.name || merged.get(id)?.name || '', image: gift.image || merged.get(id)?.image || '' });
+      for (const [id, gift] of result.value) merged.set(id, { ...merged.get(id), ...gift, name: gift.name || merged.get(id)?.name || '', image: gift.image || merged.get(id)?.image || '', price: gift.price ?? merged.get(id)?.price ?? null });
     }
     return merged;
   })().catch(() => previous?.value || new Map());
@@ -121,7 +134,7 @@ export async function loadGiftConfig() {
   for (const entries of results) {
     for (const [id, gift] of entries) {
       const previous = merged.get(id);
-      merged.set(id, { name: gift.name || previous?.name || '', image: gift.image || previous?.image || '', exp: gift.exp ?? previous?.exp ?? null });
+      merged.set(id, { name: gift.name || previous?.name || '', image: gift.image || previous?.image || '', price: gift.price ?? previous?.price ?? null });
     }
   }
   lastResults = results;
@@ -138,11 +151,11 @@ export function parseProp(payload) {
   if (!prop?.name) return null;
   const prefix = /^https?:\/\//i.test(prop.picUrlPrefix || '') ? prop.picUrlPrefix : 'https://gfs-op.douyucdn.cn/dygift';
   const path = [prop.focusPic, prop.propPic, prop.chatPic].find((url) => typeof url === 'string' && url) || '';
-  const exp = Number(prop.exp);
   return {
     name: prop.name,
     image: !path || /^https?:\/\//i.test(path) ? path : `${prefix}${path}`,
-    exp: Number.isFinite(exp) && exp >= 0 ? exp : null,
+    // priceType 1 = 鱼丸，2 = 鱼翅，与礼物配置的 type 含义一致
+    price: giftPrice(prop.price, { yuwan: Number(prop.priceType) === 1 }),
   };
 }
 
@@ -170,9 +183,13 @@ export async function resolveGift(gift, rid = '') {
   if (!gift.id && gift.propId) {
     const prop = await loadPropConfig(gift.propId);
     if (!prop) return gift;
-    return { ...gift, giftName: prop.name || gift.giftName, image: prop.image || gift.image || '', value: prop.exp == null ? gift.value : prop.exp / 10 };
+    return { ...gift, giftName: prop.name || gift.giftName, image: prop.image || gift.image || '', value: prop.price ?? gift.value ?? null };
   }
   const [globalConfig, roomConfig] = await Promise.all([loadGiftConfig(), loadRoomGiftConfig(rid)]);
-  const config = roomConfig.get(String(gift.id)) || globalConfig.get(String(gift.id));
-  return { ...gift, giftName: config?.name || gift.giftName, image: config?.image || gift.image || '', value: config ? (config.exp == null ? null : config.exp / 10) : gift.value, meta: config?.svga ? { svga: config.svga, image: config.image || gift.image || '' } : undefined };
+  const roomGift = roomConfig.get(String(gift.id));
+  const globalGift = globalConfig.get(String(gift.id));
+  const config = roomGift || globalGift;
+  // value 是单个礼物的鱼翅价格；房间源（如活动兑换）没有标价时退回全局配置
+  const value = roomGift?.price ?? globalGift?.price ?? gift.value ?? null;
+  return { ...gift, giftName: config?.name || gift.giftName, image: config?.image || gift.image || '', value, meta: config?.svga ? { svga: config.svga, image: config.image || gift.image || '' } : undefined };
 }
