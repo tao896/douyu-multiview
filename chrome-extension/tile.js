@@ -411,37 +411,75 @@ export class Tile {
     this.onDanmaku(this, chat);
   }
 
-  async handleGift(gift) {
-    gift = await resolveGift(gift, this.s.rid);
-    if (this.destroyed) return;
-    // 某些斗鱼礼物帧不携带价值字段；此时保留记录，避免整类礼物被误过滤。
+  handleGift(gift) {
+    // Preserve socket order even when gift metadata requests finish out of order.
+    const resolved = resolveGift(gift, this.s.rid);
+    const previous = this.giftPending || Promise.resolve();
+    const pending = Promise.all([previous.catch(() => {}), resolved]).then(([, item]) => {
+      if (!this.destroyed) this.acceptGift(item);
+    });
+    this.giftPending = pending;
+    return pending;
+  }
+
+  acceptGift(gift) {
     if (this.giftNameFilter.some((name) => String(gift.giftName || '').includes(name))) return;
     if (this.giftValueFilter != null && Number.isFinite(gift.value) && gift.value < this.giftValueFilter) return;
-    const key = `${gift.user || ''}|${gift.id || gift.giftName || ''}`;
+    const now = Date.now();
+    this.expireGifts(now);
+    const key = JSON.stringify([gift.userId ? `uid:${gift.userId}` : `name:${gift.user || ''}`,
+      gift.id ? `gift:${gift.id}` : gift.propId ? `prop:${gift.propId}` : `name:${gift.giftName || ''}`]);
+    const durationMs = Number.isFinite(gift.durationMs) && gift.durationMs > 0 && gift.durationMs <= 2147483647 ? gift.durationMs : 5000;
+    const count = Number.isFinite(gift.count) && gift.count > 0 ? gift.count : 1;
     const existing = this.gifts.find((item) => item.key === key);
-    if (existing) { existing.count += gift.count || 1; existing.time = Date.now(); }
-    else {
-      const item = { ...gift, key, count: gift.count || 1, time: Date.now(), meta: { image: gift.image } };
+    if (existing) {
+      existing.count += count;
+      existing.value = gift.value ?? existing.value;
+      existing.time = now;
+      existing.durationMs = durationMs;
+      existing.expiresAt = now + durationMs;
+    } else {
+      const item = { ...gift, key, count, time: now, createdAt: now, durationMs, expiresAt: now + durationMs, meta: { image: gift.image } };
+      const value = entry => (Number.isFinite(entry.value) && entry.value > 0 ? entry.value : 0) * entry.count;
+      if (this.gifts.length >= 5) {
+        const lowest = this.gifts.reduce((a, b) => value(b) < value(a) ||
+          (value(b) === value(a) && (b.createdAt ?? b.time) < (a.createdAt ?? a.time)) ? b : a);
+        if (value(item) < value(lowest)) { this.renderGifts(); this.scheduleGiftExpiry(); return; }
+        this.removeGiftRow(lowest.key);
+        this.gifts = this.gifts.filter(entry => entry !== lowest);
+      }
+      // A fading row still occupies visual space. Release it before adding a sixth row.
+      const activeKeys = new Set(this.gifts.map(entry => entry.key));
+      for (const oldKey of this.giftRows?.keys() || []) {
+        if (oldKey === key || (this.giftRows.size >= 5 && !activeKeys.has(oldKey))) this.removeGiftRow(oldKey);
+      }
       this.gifts.push(item);
-    }
-    while (this.gifts.length > 4) {
-      const expired = this.gifts.shift();
-      this.fadeGift(expired);
     }
     this.renderGifts();
     this.scheduleGiftExpiry();
+  }
+
+  removeGiftRow(key) {
+    clearTimeout(this.giftExitTimers?.get(key));
+    this.giftExitTimers?.delete(key);
+    this.giftRows?.get(key)?.remove();
+    this.giftRows?.delete(key);
+  }
+
+  expireGifts(now) {
+    const deadline = item => item.expiresAt ?? item.time + 5000;
+    this.gifts.filter(item => deadline(item) <= now).forEach(item => this.fadeGift(item));
+    this.gifts = this.gifts.filter(item => deadline(item) > now);
   }
 
   scheduleGiftExpiry() {
     clearTimeout(this.giftHideTimer);
     this.giftHideTimer = 0;
     if (this.destroyed || !this.gifts.length) return;
-    const delay = Math.max(0, Math.min(...this.gifts.map((item) => item.time + 5000)) - Date.now());
+    const delay = Math.max(0, Math.min(...this.gifts.map(item => item.expiresAt ?? item.time + 5000)) - Date.now());
     this.giftHideTimer = setTimeout(() => {
       if (this.destroyed) return;
-      const now = Date.now();
-      this.gifts.filter((item) => now - item.time >= 5000).forEach((item) => this.fadeGift(item));
-      this.gifts = this.gifts.filter((item) => now - item.time < 5000);
+      this.expireGifts(Date.now());
       this.renderGifts();
       this.scheduleGiftExpiry();
     }, delay);

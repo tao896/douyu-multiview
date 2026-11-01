@@ -1,3 +1,4 @@
+import { searchRooms } from './room-search.js';
 import { getRoomInfo, getStream, resolveRid } from './douyu.js';
 
 function parseRid(value) {
@@ -28,6 +29,8 @@ export async function handleApiPath(path) {
     error.status = 400;
     throw error;
   }
+
+  if (url.pathname === '/api/search') return searchRooms(url.searchParams.get('keyword'));
 
   if (url.pathname === '/api/resolve') {
     const rid = await resolveRid(url.searchParams.get('input'));

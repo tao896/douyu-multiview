@@ -54,11 +54,14 @@ export function giftFromFields(f) {
   const id = rawId === '0' ? '' : rawId;
   const pid = String(f.pid || '').trim();
   const propId = !id && /^[1-9]\d{0,11}$/.test(pid) ? pid : '';
-  const count = Math.max(1, Number(f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);
+  const count = Math.max(1, Number(f.gfcnt || f.gfc || f.gcnt || f.giftcount || f.gc || 1) || 1);
   const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
   const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
   // dgb 帧不带价格（gs 是展示样式，恒为 0），单价由礼物配置补全；未知时为 null，不参与价值过滤。
-  return { id, ...(propId && { propId }), giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: avatarFromIc(f.ic || f.avatar || f.useravatar) };
+  // 原站 VideoBarrageBanner 使用观众端 wbcstv2（秒）；缺失时 mounted 默认 5000ms。
+  const seconds = Number(f.wbcstv2);
+  const durationMs = Number.isFinite(seconds) && seconds > 0 && seconds * 1000 <= 2147483647 ? seconds * 1000 : 5000;
+  return { id, ...(propId && { propId }), userId: String(f.uid || ''), durationMs, giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: avatarFromIc(f.ic || f.avatar || f.useravatar) };
 }
 
 export class DanmakuClient {

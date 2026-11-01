@@ -1470,3 +1470,9 @@ kbd {
     transition-duration: .01ms !important;
   }
 }
+
+.quick-search-results { max-height: min(400px, 50vh); overflow-y: auto; }
+.quick-search-option { display:flex; align-items:center; gap:10px; padding:10px; margin-top:4px; border-radius:6px; cursor:pointer; }
+.quick-search-option[aria-selected="true"], .quick-search-option:hover { background:var(--bg); outline:1px solid var(--accent); outline-offset:-1px; }
+.quick-search-option img { width:32px; height:32px; border-radius:50%; object-fit:cover; }
+.quick-search-option div { overflow-wrap:anywhere; }

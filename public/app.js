@@ -1,3 +1,4 @@
+import { bindQuickSearch } from './quick-search.js';
 // 顶层：观看方案、房间列表、批量管理、网格布局、全局控制与持久化
 import { Tile } from './tile.js';
 import { fetchJson, isAbortError } from './net.js';
@@ -1242,19 +1243,20 @@ $('giftFilterForm')?.addEventListener('submit', (event) => {
 let ctrlTimer = 0;
 const quickSearch = $('quickSearch');
 const quickInput = $('quickSearchInput');
+const quickSearchController = bindQuickSearch({
+  panel: quickSearch, input: quickInput, results: $('quickSearchResults'), status: $('quickSearchError'),
+  onOpen(value) { $('addInput').value = value; $('addForm').requestSubmit(); },
+});
 function closeQuickSearch() {
   clearTimeout(ctrlTimer); ctrlTimer = 0;
-  if (quickSearch) quickSearch.hidden = true;
+  quickSearchController.close();
 }
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Control' || event.repeat || event.metaKey) return;
   if (isEditableTarget(event.target) || document.querySelector('dialog[open]')) return;
   ctrlTimer = setTimeout(() => {
-    quickSearch.hidden = !quickSearch.hidden;
-    if (quickSearch.hidden) return;
-    quickInput.value = '';
-    $('quickSearchError').textContent = '';
-    quickInput.focus();
+    if (quickSearch.hidden) quickSearchController.open();
+    else closeQuickSearch();
   }, 300);
 });
 document.addEventListener('keyup', (event) => { if (event.key === 'Control') clearTimeout(ctrlTimer); });
@@ -1264,15 +1266,6 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (quickSearch && !quickSearch.hidden && !quickSearch.contains(event.target)) closeQuickSearch();
 });
-quickInput?.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { closeQuickSearch(); return; }
-  if (event.key !== 'Enter') return;
-  event.preventDefault();
-  $('addInput').value = quickInput.value;
-  closeQuickSearch();
-  $('addForm').requestSubmit();
-});
-
 // —— 搜索、筛选和批量操作 ——
 function syncBatchControls() {
   const selected = rooms.filter((room) => room.selected);

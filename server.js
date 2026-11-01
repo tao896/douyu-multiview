@@ -1,6 +1,7 @@
 // 极薄后端：只做斗鱼签名取流（该接口无 CORS 头，浏览器无法直连）+ 静态文件托管
 // 播放（FLV 带 access-control-allow-origin: *）与弹幕（WSS 不校验 Origin）均由前端直连
 import http from 'node:http';
+import { searchRooms } from './public/room-search.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -81,6 +82,7 @@ function parseRate(value) {
 
 async function handleApi(req, res, url) {
   const head = req.method === 'HEAD';
+  if (url.pathname === '/api/search') return sendJson(res, 200, await searchRooms(url.searchParams.get('keyword')), head);
   // 解析输入 → 房间号 + 房间信息 + 首个流地址
   if (url.pathname === '/api/resolve') {
     const rid = await resolveRid(url.searchParams.get('input'));

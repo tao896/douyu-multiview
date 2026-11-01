@@ -86,8 +86,45 @@ for (const source of ['public', 'chrome-extension', 'dist/chrome-extension']) {
       for (const user of ['C', 'D', 'E']) await tile.handleGift({ user, id: user, giftName: user, count: 1 });
     });
     await page.clock.runFor(300);
-    await expect(page.locator('.gift-copy strong')).toHaveText(['Bob', 'C', 'D', 'E']);
+    await expect(page.locator('.gift-copy strong')).toHaveText(['Alice', 'Bob', 'C', 'D', 'E']);
     await page.clock.runFor(5000);
     await expect(page.locator('.gift-item')).toHaveCount(0);
   });
 }
+
+test('gift priority protects valuable gifts and fading rows never create a sixth slot', async ({ page }) => {
+  const { readFile } = await import('node:fs/promises');
+  await page.route('**/gift-policy/**', async route => {
+    const name = new URL(route.request().url()).pathname.split('/').pop();
+    if (name === 'index.html') return route.fulfill({ contentType: 'text/html', body: '<template id="tileTpl"></template><div id="one"></div><div id="two"></div>' });
+    if (name === 'gift-config.js') return route.fulfill({ contentType: 'text/javascript', body: 'export async function resolveGift(gift) { return gift; }' });
+    return route.fulfill({ contentType: 'text/javascript', body: await readFile(`public/${name}`, 'utf8') });
+  });
+  await page.goto('/gift-policy/index.html'); await page.clock.install();
+  await page.evaluate(async () => {
+    const { Tile } = await import('/gift-policy/tile.js');
+    window.make = id => Object.assign(Object.create(Tile.prototype), { s: {}, gifts: [], giftsEnabled: true, giftNameFilter: [], giftValueFilter: null, giftRows: new Map(), giftExitTimers: new Map(), $: { giftLog: document.getElementById(id) } });
+    window.a = make('one'); window.b = make('two');
+    await a.handleGift({ id: 'rocket', value: 500, count: 2, durationMs: 20000 });
+    for (let i = 0; i < 4; i++) await a.handleGift({ id: String(i), value: 10, durationMs: 1000 });
+    await a.handleGift({ id: 'free', value: 0 });
+    await b.handleGift({ id: 'independent', value: 0 });
+  });
+  await expect(page.locator('#one .gift-item')).toHaveCount(5);
+  await expect(page.locator('#two .gift-item')).toHaveCount(1);
+  expect(await page.evaluate(() => a.gifts.some(g => g.id === 'free'))).toBe(false);
+  await page.clock.runFor(1000);
+  await page.evaluate(async () => {
+    for (let i = 0; i < 4; i++) {
+      await a.handleGift({ id: `new${i}`, value: 20 });
+      if (a.$.giftLog.children.length > 5) throw new Error('sixth visible row');
+    }
+    await a.handleGift({ id: 'bigger', value: 100 });
+    if (a.$.giftLog.children.length > 5) throw new Error('sixth visible row');
+  });
+  await page.clock.runFor(6000);
+  await expect(page.locator('#one .gift-item')).toHaveCount(1);
+  await expect(page.locator('#two .gift-item')).toHaveCount(0);
+  await page.clock.runFor(14000);
+  await expect(page.locator('#one .gift-item')).toHaveCount(0);
+});

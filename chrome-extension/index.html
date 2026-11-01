@@ -358,7 +358,8 @@
 </template>
 
 <div class="quick-search" id="quickSearch" hidden role="dialog" aria-label="打开直播间">
-  <input id="quickSearchInput" aria-label="房间号或斗鱼链接" placeholder="输入房间号或斗鱼链接">
+  <input id="quickSearchInput" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="quickSearchResults" autocomplete="off" maxlength="100" aria-label="主播名称、房间号或斗鱼链接" placeholder="搜索主播名称，或输入房间号 / 斗鱼链接">
+  <div id="quickSearchResults" class="quick-search-results" role="listbox" aria-label="主播候选"></div>
   <span id="quickSearchError" role="status"></span>
 </div>
 
