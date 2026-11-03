@@ -316,9 +316,6 @@
         <button class="icon" data-act="aggregate" title="开启弹幕聚合" aria-label="开启弹幕聚合" aria-pressed="false">
           <svg class="tile-icon" aria-hidden="true"><use href="#icon-danmaku-aggregate"/></svg>
         </button>
-        <button class="icon" data-act="data" title="查看今日数据" aria-label="查看今日数据">
-          <svg class="tile-icon" aria-hidden="true"><use href="#icon-data"/></svg>
-        </button>
         <button class="icon" data-act="pip" title="画中画" aria-label="进入画中画" hidden>▣</button>
         <button class="icon" data-act="expand" title="放大 / 还原">⤢</button>
         <button class="icon" data-act="reload" title="重新加载">↻</button>
@@ -431,27 +428,6 @@
       <button class="primary" value="confirm">关闭</button>
     </div>
   </form>
-</dialog>
-
-<dialog class="modal room-data-modal" id="roomDataDialog" aria-labelledby="roomDataTitle">
-  <div class="room-data-head">
-    <div class="room-data-heading">
-      <h2 id="roomDataTitle" data-data-title>今日数据</h2>
-      <p data-data-room></p>
-    </div>
-    <button class="ghost" type="button" data-data-close aria-label="关闭数据" autofocus>关闭</button>
-  </div>
-  <div class="room-data-body">
-    <div class="room-data-frame" data-data-frame></div>
-    <p class="room-data-status" data-data-status role="status" aria-live="polite" hidden></p>
-  </div>
-  <div class="room-data-footer">
-    <p>数据来源：在看直播。若需登录或页面未显示，请在新标签页打开，登录后刷新。</p>
-    <div class="room-data-actions">
-      <button class="ghost" type="button" data-data-refresh>刷新数据</button>
-      <a class="ghost" data-data-link target="_blank" rel="noopener noreferrer">在新标签页打开 ↗</a>
-    </div>
-  </div>
 </dialog>
 
 <dialog class="modal" id="workspaceNameDialog" aria-labelledby="workspaceNameTitle">

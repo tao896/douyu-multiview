@@ -28,7 +28,6 @@ export class Tile {
     onState,
     onVisibility,
     onFocus,
-    onData,
     onDanmaku,
     onRates,
     onPiP,
@@ -53,7 +52,6 @@ export class Tile {
     this.onState = onState || (() => {});
     this.onVisibility = onVisibility || (() => {});
     this.onFocus = onFocus || (() => {});
-    this.onData = onData || (() => {});
     this.onDanmaku = onDanmaku || (() => {});
     this.onRates = onRates || (() => {});
     this.onPiP = onPiP || (() => {});
@@ -160,7 +158,6 @@ export class Tile {
         aggregate: () => this.onAggregate(this),
         gift: () => this.setGiftsEnabled(!this.giftsEnabled),
         focus: () => this.onFocus(this),
-        data: () => this.onData(this),
         pip: () => this.togglePictureInPicture(),
         expand: () => this.toggleExpand(),
         fullscreen: () => this.el.querySelector('[data-stage]').requestFullscreen?.(),

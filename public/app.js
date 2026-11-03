@@ -3,7 +3,6 @@ import { bindQuickSearch } from './quick-search.js';
 import { Tile } from './tile.js';
 import { fetchJson, isAbortError } from './net.js';
 import { RoomStatusScheduler } from './room-scheduler.js';
-import { RoomDataDialog } from './room-data.js';
 import {
   STORAGE_KEY_V1,
   STORAGE_KEY_V2,
@@ -105,7 +104,6 @@ let preferredFocusRid = '';
 let giftsEnabled = true;
 let giftNameFilter = '';
 let giftValueFilter = null;
-const roomDataDialog = new RoomDataDialog($('roomDataDialog'));
 
 function readStored(key) {
   try {
@@ -803,7 +801,6 @@ function openRoom(room, { persist = true } = {}) {
     },
     onVisibility: (item) => scheduleEco(item),
     onFocus: (item) => setFocusedTile(item),
-    onData: () => roomDataDialog.open(tile.s),
     onDanmaku: (source, chat) => dispatchDanmaku(source, chat),
     onAggregate: (item) => toggleAggregate(item),
     onRates: () => syncBatchRates(),
@@ -981,7 +978,6 @@ function renderWorkspaceSelect() {
 }
 
 function clearRuntime() {
-  roomDataDialog.close();
   exitSolo({ restore: false, persist: false });
   [...tiles].forEach((tile) => closeTile(tile, { persist: false, checkStatus: false }));
   rooms.forEach((room) => scheduler?.cancel(room));

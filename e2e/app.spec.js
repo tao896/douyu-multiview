@@ -149,7 +149,7 @@ test('opens one stream, exposes focus/diagnostics, notification and backup contr
   expect(download.suggestedFilename()).toMatch(/^douyu-multiview-.*\.json$/);
 });
 
-test('reconnects after Early-EOF, escalates persistent buffering and closes today data', async ({ page }) => {
+test('reconnects after Early-EOF, escalates persistent buffering', async ({ page }) => {
   test.setTimeout(60_000);
   const counts = await mockApplication(page);
   await page.goto('/');
@@ -172,14 +172,6 @@ test('reconnects after Early-EOF, escalates persistent buffering and closes toda
   await expect.poll(() => page.locator('video').evaluate(video => video.currentTime), { timeout: 12_000 }).toBeGreaterThan(0);
   expect(counts.stream).toBe(streamCount);
   await expect.poll(() => counts.stream, { timeout: 25_000 }).toBeGreaterThan(streamCount);
-
-  const tile = page.locator('article.tile');
-  await revealTileControls(tile);
-  await tile.getByRole('button', { name: '查看今日数据' }).click();
-  const dialog = page.getByRole('dialog', { name: /今日数据/ });
-  await expect(dialog).toBeVisible();
-  await dialog.evaluate((element) => element.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-  await expect(dialog).toBeHidden();
 });
 
 for (const bufferedEnd of [2, 12]) {
