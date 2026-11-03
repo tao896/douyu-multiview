@@ -429,7 +429,8 @@ export class Tile {
     this.expireGifts(now);
     const key = JSON.stringify([gift.userId ? `uid:${gift.userId}` : `name:${gift.user || ''}`,
       gift.id ? `gift:${gift.id}` : gift.propId ? `prop:${gift.propId}` : `name:${gift.giftName || ''}`]);
-    const durationMs = Number.isFinite(gift.durationMs) && gift.durationMs > 0 && gift.durationMs <= 2147483647 ? gift.durationMs : 5000;
+    // 礼物最多停留 30 秒。
+    const durationMs = Number.isFinite(gift.durationMs) && gift.durationMs > 0 ? Math.min(gift.durationMs, 30000) : 5000;
     const count = Number.isFinite(gift.count) && gift.count > 0 ? gift.count : 1;
     const existing = this.gifts.find((item) => item.key === key);
     if (existing) {
