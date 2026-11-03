@@ -208,6 +208,10 @@
             aria-label="状态 0/0" data-tooltip="连接与性能诊断：播放 0/0">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-activity"/></svg>
     </button>
+    <button class="ghost toolbar-icon-btn" id="chatToggleBtn" type="button" aria-pressed="false"
+            aria-controls="chatPanel" aria-label="显示聊天窗" data-tooltip="显示聊天窗（C）">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-danmaku"/></svg>
+    </button>
     <button class="ghost toolbar-icon-btn" id="helpBtn" type="button"
             aria-label="快捷键帮助" data-tooltip="快捷键帮助">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-help"/></svg>
@@ -297,6 +301,24 @@
       <p class="dim" id="emptyDetail">可添加多个房间同屏观看，每个窗口的音量和弹幕独立控制；拖动窗口标题栏可调整顺序。</p>
     </section>
   </div>
+
+  <aside class="chat-panel" id="chatPanel" aria-label="直播间聊天" inert>
+    <div class="chat-head">
+      <select id="chatRoomSelect" aria-label="选择聊天的直播间" disabled></select>
+      <button class="sidebar-toggle" id="chatHideBtn" type="button"
+              aria-controls="chatPanel" title="隐藏聊天窗（C）" aria-label="隐藏聊天窗">»</button>
+    </div>
+    <div class="chat-list" id="chatList" role="log" aria-live="off"></div>
+    <p class="chat-empty" id="chatEmpty">打开直播间后，可在这里查看和发送弹幕</p>
+    <form class="chat-form" id="chatForm" autocomplete="off">
+      <p class="chat-auth" id="chatAuth"></p>
+      <div class="chat-input-row">
+        <input id="chatInput" maxlength="50" aria-label="弹幕内容" disabled>
+        <button type="submit" id="chatSendBtn" disabled>发送</button>
+      </div>
+      <p class="chat-hint" id="chatHint" role="status" hidden></p>
+    </form>
+  </aside>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
@@ -466,6 +488,7 @@
       <div><dt><kbd>/</kbd></dt><dd>聚焦房间搜索</dd></div>
       <div><dt><kbd>B</kbd></dt><dd>展开或收起侧栏</dd></div>
       <div><dt><kbd>T</kbd></dt><dd>隐藏或显示头部工具栏</dd></div>
+      <div><dt><kbd>C</kbd></dt><dd>显示或隐藏聊天窗</dd></div>
       <div><dt><kbd>M</kbd></dt><dd>全部静音 / 取消静音</dd></div>
       <div><dt><kbd>D</kbd></dt><dd>弹幕全开 / 全关</dd></div>
       <div><dt><kbd>R</kbd></dt><dd>刷新所有窗口</dd></div>

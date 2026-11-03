@@ -3,6 +3,7 @@ const FONT = '600 %dpx -apple-system, "PingFang SC", "Microsoft YaHei", sans-ser
 const COLORS = { 1: '#ff5c5c', 2: '#4d8cff', 3: '#5ec46a', 4: '#ff9c2e', 5: '#c86bff', 6: '#ff6bb5' };
 const DURATION = 8;   // 一条弹幕横穿窗口的秒数
 const MAX_ITEMS = 240; // 屏上上限，防弹幕刷屏拖垮渲染
+const FRAME_INTERVAL = 1000 / 30;
 
 export class DanmakuRenderer {
   constructor(canvas) {
@@ -20,6 +21,8 @@ export class DanmakuRenderer {
     this.lineH = 24;
     this.raf = 0;
     this.last = 0;
+    this.lastPaint = 0;
+    this.widthCache = new Map();
     // 观察父容器而不是 canvas 自身，避免「改 canvas 尺寸 → 又触发观察」的回环
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement || canvas);
@@ -37,6 +40,7 @@ export class DanmakuRenderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.textBaseline = 'top';
     this.font = Math.max(12, Math.min(22, Math.round(r.height / 20)));
+    this.widthCache.clear();
     this.lineH = Math.round(this.font * 1.5);
     // 弹幕只占上部 70%，不挡主播和字幕
     const n = Math.max(1, Math.floor((r.height * 0.7) / this.lineH));
@@ -83,7 +87,12 @@ export class DanmakuRenderer {
     if (this.items.length >= MAX_ITEMS) return;
     const ctx = this.ctx;
     ctx.font = FONT.replace('%d', this.font);
-    const width = ctx.measureText(text).width;
+    const cacheKey = `${this.font}|${text}`;
+    let width = this.widthCache.get(cacheKey);
+    if (width == null) {
+      width = ctx.measureText(text).width;
+      this.widthCache.set(cacheKey, width);
+    }
     const track = this.pickTrack(width);
     if (track < 0) return;
     const item = {
@@ -103,8 +112,13 @@ export class DanmakuRenderer {
     if (this.raf || !this.enabled || !this.active) return;
     this.last = performance.now();
     const loop = (now) => {
+      if (now - this.lastPaint < FRAME_INTERVAL) {
+        this.raf = requestAnimationFrame(loop);
+        return;
+      }
       const dt = Math.min((now - this.last) / 1000, 0.1); // 切后台回来不要一次跳太多
       this.last = now;
+      this.lastPaint = now;
       this.raf = 0;
       this.tick(dt);
       if (this.enabled && this.active && this.items.length) this.raf = requestAnimationFrame(loop);

@@ -1,4 +1,17 @@
 import { handleApiPath } from './api.js';
+import { DanmakuSender, LOGIN_COOKIE_NAMES, credentialsFromCookies } from './danmaku-sender.js';
+
+const danmakuSender = new DanmakuSender();
+
+// 取浏览器访问 www.douyu.com 时会携带的 Cookie，即当前登录的斗鱼账号。
+// 部分 Chrome 版本里 cookies.getAll 会返回空列表，按名称逐个 get 更可靠。
+async function readCredentials() {
+  const entries = await Promise.all(LOGIN_COOKIE_NAMES.map(async (name) => {
+    const cookie = await chrome.cookies.get({ url: 'https://www.douyu.com/', name });
+    return [name, cookie?.value || ''];
+  }));
+  return credentialsFromCookies(Object.fromEntries(entries));
+}
 
 const APP_URL = chrome.runtime.getURL('index.html');
 const STORE = 'douyu-live-reminders';
@@ -92,9 +105,16 @@ function serializeError(error) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'douyu-auth-status') {
-    chrome.cookies.get({ url: 'https://www.douyu.com/', name: 'acf_did' }, (cookie) => {
-      sendResponse({ loggedIn: !!cookie });
-    });
+    readCredentials()
+      .then((credentials) => sendResponse({ loggedIn: !!credentials, uid: credentials?.uid || '', nickname: credentials?.nickname || '' }))
+      .catch(() => sendResponse({ loggedIn: false }));
+    return true;
+  }
+  if (message?.type === 'douyu-send-danmaku') {
+    readCredentials()
+      .then((credentials) => danmakuSender.send(message.rid, message.text, credentials))
+      .then((result) => sendResponse({ ok: true, confirmed: !!result?.confirmed }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || '弹幕发送失败', relogin: !!error?.relogin }));
     return true;
   }
   if (message?.type === 'douyu-sync-reminders') { syncReminders(message.rooms); return; }

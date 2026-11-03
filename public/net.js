@@ -13,6 +13,25 @@ function extensionRuntime() {
   return runtime?.id && typeof runtime.sendMessage === 'function' ? runtime : null;
 }
 
+export function isExtensionPage() {
+  return !!extensionRuntime();
+}
+
+// 向扩展后台发送非 API 消息（如登录状态、发弹幕），网页版不可用
+export function sendExtensionMessage(message, { timeout = 20_000 } = {}) {
+  const runtime = extensionRuntime();
+  if (!runtime) return Promise.reject(new RequestError('仅扩展版支持'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new RequestError('扩展后台响应超时', { status: 408 })), timeout);
+    runtime.sendMessage(message, (response) => {
+      clearTimeout(timer);
+      const runtimeError = runtime.lastError;
+      if (runtimeError) reject(new RequestError(`扩展后台通信失败：${runtimeError.message}`));
+      else resolve(response);
+    });
+  });
+}
+
 function fetchExtensionApi(runtime, url, { signal, timeout }) {
   return new Promise((resolve, reject) => {
     let settled = false;

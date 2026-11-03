@@ -1,4 +1,5 @@
 import { bindQuickSearch } from './quick-search.js';
+import { ChatPanel } from './chat-panel.js';
 // 顶层：观看方案、房间列表、批量管理、网格布局、全局控制与持久化
 import { Tile } from './tile.js';
 import { fetchJson, isAbortError } from './net.js';
@@ -135,6 +136,8 @@ function snapshotActiveWorkspace() {
   current.sidebarCollapsedDesktop = workspaceEl.classList.contains('sidebar-collapsed');
   current.sidebarHiddenDesktop = workspaceEl.classList.contains('sidebar-hidden');
   current.toolbarHidden = document.body.classList.contains('toolbar-hidden');
+  current.chatPanelOpen = chatPanelPreferred;
+  current.chatRid = chatPanel.selectedRid;
   current.showRoomStats = !document.body.classList.contains('room-stats-hidden');
   current.hideOfflineWindows = hideOfflineWindows;
   current.layoutMode = grid.dataset.layout === 'focus' ? 'focus' : 'grid';
@@ -265,11 +268,46 @@ $('sidebarHideBtn').addEventListener('click', () => {
   else setSidebarHidden(true);
 });
 $('sidebarRevealBtn').addEventListener('click', () => setSidebarHidden(false));
+// —— 右侧聊天窗 ——
+const chatPanel = new ChatPanel({ onSelect: () => save() });
+// 用户最近一次选择的显示状态；窄屏下聊天窗以抽屉覆盖画面，恢复方案时默认收起。
+let chatPanelPreferred = false;
+
+function setChatPanelOpen(open, { persist = true } = {}) {
+  const next = !!open;
+  const panel = $('chatPanel');
+  if (persist) chatPanelPreferred = next;
+  if (!next && panel.contains(document.activeElement)) document.activeElement.blur();
+  workspaceEl.classList.toggle('chat-open', next);
+  panel.inert = !next;
+  const btn = $('chatToggleBtn');
+  btn.classList.toggle('on', next);
+  btn.setAttribute('aria-pressed', String(next));
+  setToolbarButtonLabel(btn, next ? '隐藏聊天窗' : '显示聊天窗', `${next ? '隐藏' : '显示'}聊天窗（C）`);
+  chatPanel.setVisible(next);
+  if (persist) save();
+}
+
+function toggleChatPanel() {
+  setChatPanelOpen(!workspaceEl.classList.contains('chat-open'));
+}
+
+function syncChatRooms() {
+  chatPanel.setRooms(tiles.map((tile) => ({
+    rid: String(tile.s.rid),
+    label: tile.s.nickname || tile.s.title || `房间 ${tile.s.rid}`,
+  })));
+}
+
+$('chatToggleBtn').addEventListener('click', toggleChatPanel);
+$('chatHideBtn').addEventListener('click', () => setChatPanelOpen(false));
+
 $('mobileRoomsBtn').addEventListener('click', () => setMobileSidebar(!mobileSidebarOpen));
 $('sidebarBackdrop').addEventListener('click', () => setMobileSidebar(false));
 mobileMedia.addEventListener('change', () => {
   setMobileSidebar(false);
   setSidebarHidden(activeWorkspace()?.sidebarHiddenDesktop, { persist: false });
+  setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
   syncBarHeight();
 });
 
@@ -777,6 +815,7 @@ function syncRoomFromTile(tile) {
   syncSidebarRoom(room);
   syncEmpty();
   scheduleEco(tile);
+  syncChatRooms();
   save();
 }
 
@@ -822,6 +861,7 @@ function openRoom(room, { persist = true } = {}) {
   scheduleEco(tile);
   syncSidebarRoom(room);
   syncEmpty();
+  syncChatRooms();
   tile.load();
   if (persist) save();
   return tile;
@@ -837,6 +877,8 @@ function toggleAggregate(tile) {
 }
 
 function dispatchDanmaku(source, chat) {
+  // 聊天窗不受画面弹幕开关影响
+  chatPanel.push(source.s.rid, chat);
   if (!source.s.danmaku || source.live !== true) return;
   const target = aggregateTile || source;
   const label = source.s.nickname || source.s.title || `房间 ${source.s.rid}`;
@@ -873,6 +915,7 @@ function closeTile(tile, { persist = true, checkStatus = true } = {}) {
   }
   syncBatchRates();
   syncEmpty();
+  syncChatRooms();
   if (persist) {
     save({ immediate: true });
     if (room) revealSidebarRoom(room);
@@ -1010,6 +1053,9 @@ function loadWorkspaceRuntime(current) {
   setShowRoomStats(current.showRoomStats, { persist: false });
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
   setSidebarHidden(current.sidebarHiddenDesktop, { persist: false });
+  chatPanelPreferred = !!current.chatPanelOpen;
+  chatPanel.setPreferredRid(current.chatRid);
+  setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
   for (const state of current.rooms) addRoom(state, { persist: false });
   for (const rid of current.openRids) {
     const room = findRoom(rid);
@@ -1780,6 +1826,7 @@ document.addEventListener('keydown', (event) => {
     else if (workspaceEl.classList.contains('sidebar-hidden')) setSidebarHidden(false);
     else setSidebarCollapsed(!workspaceEl.classList.contains('sidebar-collapsed'));
   } else if (key === 't') setToolbarHidden(!document.body.classList.contains('toolbar-hidden'));
+  else if (key === 'c') toggleChatPanel();
   else if (key === 'm') toggleMuteAll();
   else if (key === 'd') toggleDanmakuAll();
   else if (key === 'r') reloadAll();
