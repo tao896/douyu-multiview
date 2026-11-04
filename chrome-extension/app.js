@@ -269,7 +269,43 @@ $('sidebarHideBtn').addEventListener('click', () => {
 });
 $('sidebarRevealBtn').addEventListener('click', () => setSidebarHidden(false));
 // —— 右侧聊天窗 ——
-const chatPanel = new ChatPanel({ onSelect: () => save() });
+const chatPanel = new ChatPanel({
+  onSelect: () => {
+    syncChatTools();
+    save();
+  },
+  onFilter: () => openDanmakuSettings(),
+  onMinLevel: (minLevel) => {
+    const cfg = activeWorkspace().danmaku = { ...activeWorkspace().danmaku, minLevel };
+    tiles.forEach((tile) => tile.danmakuFilter?.configure(cfg));
+    save({ immediate: true });
+  },
+  onToggleDanmaku: (rid) => {
+    const tile = findTileByRid(rid);
+    if (tile) tile.setDanmaku(!tile.s.danmaku);
+  },
+  onToggleGifts: (rid) => {
+    const tile = findTileByRid(rid);
+    if (tile) tile.setGiftsEnabled(!tile.giftsEnabled);
+  },
+});
+
+function findTileByRid(rid) {
+  return tiles.find((tile) => String(tile.s.rid) === String(rid));
+}
+
+// 工具栏显示聊天窗所选直播间的开关状态；只有该房间订阅榜单
+function syncChatTools() {
+  const tile = findTileByRid(chatPanel.rid);
+  chatPanel.setTools({
+    minLevel: activeWorkspace()?.danmaku?.minLevel || 0,
+    danmaku: tile ? tile.s.danmaku : null,
+    gifts: tile ? tile.giftsEnabled : null,
+  });
+  const wanted = chatPanel.visible ? tile : null;
+  tiles.forEach((item) => item.setRanksWanted(item === wanted));
+  chatPanel.setRanks(chatPanel.rid, tile?.ranks || {});
+}
 // 用户最近一次选择的显示状态；窄屏下聊天窗以抽屉覆盖画面，恢复方案时默认收起。
 let chatPanelPreferred = false;
 
@@ -285,6 +321,7 @@ function setChatPanelOpen(open, { persist = true } = {}) {
   btn.setAttribute('aria-pressed', String(next));
   setToolbarButtonLabel(btn, next ? '隐藏聊天窗' : '显示聊天窗', `${next ? '隐藏' : '显示'}聊天窗（C）`);
   chatPanel.setVisible(next);
+  syncChatTools();
   if (persist) save();
 }
 
@@ -297,6 +334,7 @@ function syncChatRooms() {
     rid: String(tile.s.rid),
     label: tile.s.nickname || tile.s.title || `房间 ${tile.s.rid}`,
   })));
+  syncChatTools();
 }
 
 $('chatToggleBtn').addEventListener('click', toggleChatPanel);
@@ -844,6 +882,12 @@ function openRoom(room, { persist = true } = {}) {
     onAggregate: (item) => toggleAggregate(item),
     onRates: () => syncBatchRates(),
     onPiP: (item) => scheduleEco(item),
+    onRanks: (item) => {
+      if (String(item.s.rid) === chatPanel.rid) chatPanel.setRanks(chatPanel.rid, item.ranks);
+    },
+    onGifts: (item) => {
+      if (String(item.s.rid) === chatPanel.rid) syncChatTools();
+    },
     danmakuConfig: activeWorkspace().danmaku,
   });
   tiles.push(tile);
@@ -1853,6 +1897,7 @@ $('danmakuSettingsBtn').addEventListener('click', openDanmakuSettings);
 $('danmakuSettingsForm').addEventListener('submit', (event) => {
   if (event.submitter?.value === 'cancel') return;
   const cfg = activeWorkspace().danmaku = {
+    ...activeWorkspace().danmaku,
     enabled: $('danmakuFilterEnabled').checked,
     dedupe: $('danmakuDedupeEnabled').checked,
     keywords: $('danmakuKeywords').value.split(/[\n,，]+/).map((x) => x.trim()).filter(Boolean),

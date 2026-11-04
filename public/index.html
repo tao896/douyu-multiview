@@ -308,8 +308,25 @@
       <button class="sidebar-toggle" id="chatHideBtn" type="button"
               aria-controls="chatPanel" title="隐藏聊天窗（C）" aria-label="隐藏聊天窗">»</button>
     </div>
+    <section class="chat-ranks" id="chatRanks" aria-label="今日统计与榜单">
+      <div class="chat-stats" data-chat-stats aria-live="off"></div>
+      <div class="chat-rank-tabs" role="tablist" aria-label="榜单">
+        <button type="button" role="tab" data-rank-tab="online"><span>在线榜</span><b data-rank-count>—</b></button>
+        <button type="button" role="tab" data-rank-tab="active"><span>活跃榜</span><b data-rank-count>—</b></button>
+        <button type="button" role="tab" data-rank-tab="vip"><span>贵宾</span><b data-rank-count>—</b></button>
+        <button type="button" role="tab" data-rank-tab="diamond"><span>钻粉</span><b data-rank-count>—</b></button>
+      </div>
+      <div class="chat-rank-list" data-rank-list role="tabpanel"></div>
+    </section>
     <div class="chat-list" id="chatList" role="log" aria-live="off"></div>
     <p class="chat-empty" id="chatEmpty">打开直播间后，可在这里查看和发送弹幕</p>
+    <div class="chat-tools" id="chatTools" role="toolbar" aria-label="弹幕工具">
+      <button class="chip" type="button" id="chatFilterBtn" title="弹幕屏蔽与去重（对所有窗口生效）">屏蔽/去重</button>
+      <select id="chatLevelSelect" aria-label="弹幕等级屏蔽" title="屏蔽低于所选等级用户的弹幕（对所有窗口生效）"></select>
+      <span class="chat-tools-sep" aria-hidden="true"></span>
+      <button class="chip" type="button" id="chatDanmakuBtn" aria-pressed="false" title="当前直播间画面弹幕开关" disabled>弹幕</button>
+      <button class="chip" type="button" id="chatGiftBtn" aria-pressed="false" title="当前直播间礼物记录开关" disabled>礼物</button>
+    </div>
     <form class="chat-form" id="chatForm" autocomplete="off">
       <p class="chat-auth" id="chatAuth"></p>
       <div class="chat-input-row">

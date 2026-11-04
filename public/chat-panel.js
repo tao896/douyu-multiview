@@ -1,13 +1,33 @@
 // 右侧聊天窗：显示所选已打开直播间的实时弹幕；扩展版可用浏览器登录的斗鱼账号发弹幕
 import { isExtensionPage, sendExtensionMessage } from './net.js';
+import { ChatRanks } from './chat-ranks.js';
+import { DANMAKU_LEVEL_OPTIONS } from './state.js';
 
 const MAX_MESSAGES = 200;
 const LOGIN_URL = 'https://www.douyu.com/';
 const $ = (id) => document.getElementById(id);
 
 export class ChatPanel {
-  constructor({ onSelect = () => {} } = {}) {
+  constructor({
+    onSelect = () => {},
+    onFilter = () => {},
+    onMinLevel = () => {},
+    onToggleDanmaku = () => {},
+    onToggleGifts = () => {},
+  } = {}) {
     this.onSelect = onSelect;
+    this.ranks = new ChatRanks($('chatRanks'));
+    this.tools = {
+      level: $('chatLevelSelect'),
+      danmaku: $('chatDanmakuBtn'),
+      gift: $('chatGiftBtn'),
+    };
+    this.tools.level.replaceChildren(...DANMAKU_LEVEL_OPTIONS.map((level) =>
+      new Option(level ? `屏蔽 Lv${level} 以下` : '等级不屏蔽', String(level))));
+    this.tools.level.addEventListener('change', () => onMinLevel(Number(this.tools.level.value) || 0));
+    $('chatFilterBtn').addEventListener('click', () => onFilter());
+    this.tools.danmaku.addEventListener('click', () => { if (this.rid) onToggleDanmaku(this.rid); });
+    this.tools.gift.addEventListener('click', () => { if (this.rid) onToggleGifts(this.rid); });
     this.select = $('chatRoomSelect');
     this.list = $('chatList');
     this.empty = $('chatEmpty');
@@ -39,6 +59,7 @@ export class ChatPanel {
     window.addEventListener('focus', () => { if (this.visible) this.refreshAuth(); });
     this.renderAuth();
     this.syncInput();
+    this.setTools();
   }
 
   // 方案恢复时指定上次选择的房间；该房间打开后自动选中
@@ -80,8 +101,23 @@ export class ChatPanel {
     this.list.replaceChildren();
     const room = this.rooms.find((item) => item.rid === value);
     if (room) this.appendSystem(`已切换到 ${room.label}，显示之后收到的弹幕`);
+    this.ranks.setRoom(value);
     this.syncInput();
     this.onSelect(value);
+  }
+
+  // tools: { minLevel, danmaku, gifts }；danmaku / gifts 为 null 表示没有选中的直播间
+  setTools({ minLevel = 0, danmaku = null, gifts = null } = {}) {
+    this.tools.level.value = String(minLevel);
+    for (const [button, on] of [[this.tools.danmaku, danmaku], [this.tools.gift, gifts]]) {
+      button.disabled = on == null;
+      button.classList.toggle('on', !!on);
+      button.setAttribute('aria-pressed', String(!!on));
+    }
+  }
+
+  setRanks(rid, ranks) {
+    if (String(rid) === this.rid) this.ranks.setRanks(ranks);
   }
 
   push(rid, chat) {
@@ -141,6 +177,7 @@ export class ChatPanel {
 
   setVisible(visible) {
     this.visible = !!visible;
+    this.ranks.setVisible(this.visible);
     if (this.visible) this.refreshAuth();
     else {
       this.queue = [];

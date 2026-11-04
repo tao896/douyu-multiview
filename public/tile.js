@@ -32,6 +32,8 @@ export class Tile {
     onRates,
     onPiP,
     onAggregate,
+    onRanks,
+    onGifts,
     danmakuConfig,
   }) {
     this.s = {
@@ -56,6 +58,11 @@ export class Tile {
     this.onRates = onRates || (() => {});
     this.onPiP = onPiP || (() => {});
     this.onAggregate = onAggregate || (() => {});
+    this.onRanks = onRanks || (() => {});
+    this.onGifts = onGifts || (() => {});
+    // 最近一次收到的榜单，切回聊天窗时先显示，等待下一次推送更新
+    this.ranks = {};
+    this.ranksWanted = false;
     this.live = null;
     this.destroyed = false;
     this.loadSeq = 0;
@@ -379,8 +386,9 @@ export class Tile {
   connectDanmaku() {
     if (this.dm) return;
     this.dm = new DanmakuClient(this.s.rid, {
-      onChat: (c) => { if (this.danmakuFilter.accept(c.text)) this.handleDanmaku(c); },
+      onChat: (c) => { if (this.danmakuFilter.accept(c.text, Date.now(), c.level)) this.handleDanmaku(c); },
       onGift: (gift) => this.handleGift(gift),
+      onRanks: (rank) => this.handleRanks(rank),
       onStats: (stat) => {
         if (stat.type === 'noble') this.stats.noble = stat.value;
         if (stat.type === 'noble') this.renderStats();
@@ -397,7 +405,24 @@ export class Tile {
         else this.showOffline(undefined, { cancelLoad: true });
       },
     });
+    this.dm.setRanksWanted(this.ranksWanted);
     this.dm.connect();
+  }
+
+  // rank: { type, count?, list? }；只带人数的消息不覆盖已有列表
+  handleRanks(rank) {
+    const previous = this.ranks[rank.type] || {};
+    this.ranks[rank.type] = {
+      count: rank.count ?? previous.count ?? null,
+      list: rank.list ?? previous.list ?? null,
+      updatedAt: rank.list ? Date.now() : previous.updatedAt || 0,
+    };
+    this.onRanks(this, rank.type);
+  }
+
+  setRanksWanted(wanted) {
+    this.ranksWanted = !!wanted;
+    this.dm?.setRanksWanted(this.ranksWanted);
   }
 
   renderStats() {
@@ -554,6 +579,7 @@ export class Tile {
   setGiftsEnabled(enabled) {
     this.giftsEnabled = !!enabled;
     this.renderGifts();
+    this.onGifts(this);
   }
 
   setGiftNameFilter(value) {

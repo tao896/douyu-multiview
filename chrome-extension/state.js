@@ -18,7 +18,9 @@ export const ROOM_STATE_KEYS = [
   'expanded',
   'notifyOnLive',
 ];
-export const DEFAULT_DANMAKU_CONFIG = { keywords: [], enabled: true, dedupe: true, windowMs: 3000 };
+export const DEFAULT_DANMAKU_CONFIG = { keywords: [], enabled: true, dedupe: true, windowMs: 3000, minLevel: 0 };
+// 等级屏蔽可选项：低于该等级的弹幕不显示，0 = 不屏蔽
+export const DANMAKU_LEVEL_OPTIONS = [0, 5, 10, 15, 20, 30, 40, 50];
 
 const VALID_COLS = new Set(['auto', '1', '2', '3', '4', '5']);
 const VALID_DANMAKU_SPEEDS = new Set([0.5, 0.75, 1, 1.25, 1.5, 2]);
@@ -106,7 +108,7 @@ export function normalizeGiftValueFilter(value) {
 }
 
 export function normalizeDanmakuConfig(raw = {}) {
-  return { ...DEFAULT_DANMAKU_CONFIG, ...raw, keywords: [...new Set((raw.keywords || []).map((x) => String(x).trim()).filter(Boolean))], windowMs: Math.max(0, Math.min(60000, Number(raw.windowMs) || DEFAULT_DANMAKU_CONFIG.windowMs)), enabled: raw.enabled !== false, dedupe: raw.dedupe !== false };
+  return { ...DEFAULT_DANMAKU_CONFIG, ...raw, keywords: [...new Set((raw.keywords || []).map((x) => String(x).trim()).filter(Boolean))], windowMs: Math.max(0, Math.min(60000, Number(raw.windowMs) || DEFAULT_DANMAKU_CONFIG.windowMs)), enabled: raw.enabled !== false, dedupe: raw.dedupe !== false, minLevel: DANMAKU_LEVEL_OPTIONS.includes(Number(raw.minLevel)) ? Number(raw.minLevel) : 0 };
 }
 
 export function createWorkspace(name = '默认方案', overrides = {}) {
