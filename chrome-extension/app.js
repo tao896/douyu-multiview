@@ -1700,6 +1700,7 @@ function makeDraggable(tile) {
     grid.querySelectorAll('.drop-target').forEach((node) => node.classList.remove('drop-target'));
     const order = [...grid.children].map((node) => node.dataset.rid);
     tiles.sort((a, b) => order.indexOf(String(a.s.rid)) - order.indexOf(String(b.s.rid)));
+    syncChatRooms();
     tiles.forEach((item) => item.resume());
     save();
   });
