@@ -1584,6 +1584,12 @@ kbd {
   box-shadow: none;
 }
 .chat-panel.floating #chatHideBtn { display: none; }
+/* 小窗拉得太矮时收起顶部统计与榜单，只留聊天消息和发送栏 */
+@media (max-height: 560px) {
+  .chat-panel.floating .chat-ranks,
+  .chat-panel.floating .chat-tools,
+  .chat-panel.floating .chat-auth { display: none; }
+}
 
 .chat-form { padding: 10px 12px 12px; border-top: 1px solid var(--line); }
 .chat-auth { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
