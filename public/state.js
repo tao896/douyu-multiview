@@ -81,6 +81,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
     sidebarHiddenDesktop: !!raw.sidebarHiddenDesktop,
     toolbarHidden: !!raw.toolbarHidden,
     chatPanelOpen: !!raw.chatPanelOpen,
+    chatStatsMode: raw.chatStatsMode === 'party' ? 'party' : 'room',
     chatRid: /^\d{1,12}$/.test(String(raw.chatRid ?? '')) ? String(raw.chatRid) : '',
     showRoomStats: raw.showRoomStats !== false,
     hideOfflineWindows: !!raw.hideOfflineWindows,

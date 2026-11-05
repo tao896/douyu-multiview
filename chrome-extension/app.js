@@ -138,6 +138,7 @@ function snapshotActiveWorkspace() {
   current.toolbarHidden = document.body.classList.contains('toolbar-hidden');
   current.chatPanelOpen = chatPanelPreferred;
   current.chatRid = chatPanel.selectedRid;
+  current.chatStatsMode = chatPanel.statsMode;
   current.showRoomStats = !document.body.classList.contains('room-stats-hidden');
   current.hideOfflineWindows = hideOfflineWindows;
   current.layoutMode = grid.dataset.layout === 'focus' ? 'focus' : 'grid';
@@ -288,6 +289,11 @@ const chatPanel = new ChatPanel({
     const tile = findTileByRid(rid);
     if (tile) tile.setGiftsEnabled(!tile.giftsEnabled);
   },
+  onStatsMode: () => save(),
+  // 聚会统计需要每个房间的钻粉人数，定时取一次榜单快照（不长期订阅）
+  onPartyRefresh: () => tiles.forEach((tile) => tile.refreshRankSnapshot()),
+  // 悬浮时网页右侧不再占位；小窗关闭后聊天窗回到右侧
+  onFloatChange: () => applyChatPanelLayout(),
 });
 
 function findTileByRid(rid) {
@@ -305,17 +311,36 @@ function syncChatTools() {
   const wanted = chatPanel.visible ? tile : null;
   tiles.forEach((item) => item.setRanksWanted(item === wanted));
   chatPanel.setRanks(chatPanel.rid, tile?.ranks || {});
+  syncChatParty();
+}
+
+function chatRoomLabel(tile) {
+  return tile.s.nickname || tile.s.title || `房间 ${tile.s.rid}`;
+}
+
+// 聚会统计：所有已打开直播间的贵宾 / 钻粉人数（今日流水由聊天窗自己请求）
+function syncChatParty() {
+  chatPanel.setPartyRooms(tiles.map((tile) => ({
+    rid: String(tile.s.rid),
+    label: chatRoomLabel(tile),
+    vip: tile.ranks.vip?.count ?? tile.stats.noble ?? null,
+    diamond: tile.ranks.diamond?.count ?? null,
+  })));
 }
 // 用户最近一次选择的显示状态；窄屏下聊天窗以抽屉覆盖画面，恢复方案时默认收起。
 let chatPanelPreferred = false;
 
+let chatPanelOpen = false;
+
 function setChatPanelOpen(open, { persist = true } = {}) {
   const next = !!open;
-  const panel = $('chatPanel');
+  const { panel } = chatPanel; // 悬浮时不在本页 DOM 里，不能按 id 查找
   if (persist) chatPanelPreferred = next;
   if (!next && panel.contains(document.activeElement)) document.activeElement.blur();
-  workspaceEl.classList.toggle('chat-open', next);
-  panel.inert = !next;
+  chatPanelOpen = next;
+  // 悬浮中关闭聊天窗时连同小窗一起关闭
+  if (!next) chatPanel.setFloating(false);
+  applyChatPanelLayout();
   const btn = $('chatToggleBtn');
   btn.classList.toggle('on', next);
   btn.setAttribute('aria-pressed', String(next));
@@ -325,14 +350,21 @@ function setChatPanelOpen(open, { persist = true } = {}) {
   if (persist) save();
 }
 
+// 悬浮时聊天窗在独立小窗里，网页右侧不留空位
+function applyChatPanelLayout() {
+  const { panel } = chatPanel;
+  workspaceEl.classList.toggle('chat-open', chatPanelOpen && !chatPanel.floating);
+  panel.inert = !chatPanelOpen;
+}
+
 function toggleChatPanel() {
-  setChatPanelOpen(!workspaceEl.classList.contains('chat-open'));
+  setChatPanelOpen(!chatPanelOpen);
 }
 
 function syncChatRooms() {
   chatPanel.setRooms(tiles.map((tile) => ({
     rid: String(tile.s.rid),
-    label: tile.s.nickname || tile.s.title || `房间 ${tile.s.rid}`,
+    label: chatRoomLabel(tile),
   })));
   syncChatTools();
 }
@@ -345,7 +377,8 @@ $('sidebarBackdrop').addEventListener('click', () => setMobileSidebar(false));
 mobileMedia.addEventListener('change', () => {
   setMobileSidebar(false);
   setSidebarHidden(activeWorkspace()?.sidebarHiddenDesktop, { persist: false });
-  setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
+  // 悬浮小窗不受网页宽度影响
+  if (!chatPanel.floating) setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
   syncBarHeight();
 });
 
@@ -884,6 +917,7 @@ function openRoom(room, { persist = true } = {}) {
     onPiP: (item) => scheduleEco(item),
     onRanks: (item) => {
       if (String(item.s.rid) === chatPanel.rid) chatPanel.setRanks(chatPanel.rid, item.ranks);
+      syncChatParty();
     },
     onGifts: (item) => {
       if (String(item.s.rid) === chatPanel.rid) syncChatTools();
@@ -1099,6 +1133,7 @@ function loadWorkspaceRuntime(current) {
   setSidebarHidden(current.sidebarHiddenDesktop, { persist: false });
   chatPanelPreferred = !!current.chatPanelOpen;
   chatPanel.setPreferredRid(current.chatRid);
+  chatPanel.setStatsMode(current.chatStatsMode);
   setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
   for (const state of current.rooms) addRoom(state, { persist: false });
   for (const rid of current.openRids) {

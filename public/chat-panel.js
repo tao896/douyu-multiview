@@ -6,6 +6,28 @@ import { DANMAKU_LEVEL_OPTIONS } from './state.js';
 const MAX_MESSAGES = 200;
 const LOGIN_URL = 'https://www.douyu.com/';
 const $ = (id) => document.getElementById(id);
+// 悬浮模式用 Document Picture-in-Picture：聊天窗移到始终置顶的独立小窗，DOM 与事件监听原样保留
+const FLOAT_SUPPORTED = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
+const FLOAT_SIZE = { width: 340, height: 640 };
+
+// 小窗是空白文档，复制本页样式表和图标，保证外观一致
+function copyPageAssets(target) {
+  for (const sheet of document.styleSheets) {
+    try {
+      const style = target.document.createElement('style');
+      style.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
+      target.document.head.append(style);
+    } catch {
+      if (!sheet.href) continue;
+      const link = target.document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = sheet.href;
+      target.document.head.append(link);
+    }
+  }
+  const sprite = document.querySelector('.icon-sprite');
+  if (sprite) target.document.body.append(sprite.cloneNode(true));
+}
 
 export class ChatPanel {
   constructor({
@@ -14,14 +36,33 @@ export class ChatPanel {
     onMinLevel = () => {},
     onToggleDanmaku = () => {},
     onToggleGifts = () => {},
+    onStatsMode = () => {},
+    onPartyRefresh = () => {},
+    onFloatChange = () => {},
   } = {}) {
     this.onSelect = onSelect;
-    this.ranks = new ChatRanks($('chatRanks'));
+    this.onStatsMode = onStatsMode;
+    this.onFloatChange = onFloatChange;
+    this.ranks = new ChatRanks($('chatRanks'), { onPartyRefresh });
     this.tools = {
       level: $('chatLevelSelect'),
       danmaku: $('chatDanmakuBtn'),
       gift: $('chatGiftBtn'),
+      statsMode: $('chatStatsModeBtn'),
+      float: $('chatFloatBtn'),
     };
+    this.panel = $('chatPanel');
+    this.pipWindow = null;
+    this.statsMode = 'room';
+    this.tools.statsMode.addEventListener('click', () => {
+      this.setStatsMode(this.statsMode === 'party' ? 'room' : 'party');
+      this.onStatsMode(this.statsMode);
+    });
+    if (!FLOAT_SUPPORTED) {
+      this.tools.float.disabled = true;
+      this.tools.float.title = '当前浏览器不支持悬浮模式（需要 Chrome / Edge 116 及以上的桌面版）';
+    }
+    this.tools.float.addEventListener('click', () => this.setFloating(!this.floating));
     this.tools.level.replaceChildren(...DANMAKU_LEVEL_OPTIONS.map((level) =>
       new Option(level ? `屏蔽 Lv${level} 以下` : '等级不屏蔽', String(level))));
     this.tools.level.addEventListener('change', () => onMinLevel(Number(this.tools.level.value) || 0));
@@ -124,7 +165,19 @@ export class ChatPanel {
     if (!this.visible || String(rid) !== this.rid) return;
     this.queue.push(chat);
     if (this.queue.length > MAX_MESSAGES) this.queue.splice(0, this.queue.length - MAX_MESSAGES);
-    if (!this.flushRaf) this.flushRaf = requestAnimationFrame(() => this.flush());
+    this.scheduleFlush();
+  }
+
+  // 悬浮时按小窗的帧调度：主页面切到后台后小窗仍要继续刷新
+  scheduleFlush() {
+    if (this.flushRaf) return;
+    this.flushWin = this.pipWindow || window;
+    this.flushRaf = this.flushWin.requestAnimationFrame(() => this.flush());
+  }
+
+  cancelFlush() {
+    if (this.flushRaf) this.flushWin?.cancelAnimationFrame(this.flushRaf);
+    this.flushRaf = 0;
   }
 
   // 热门房间每秒几十条弹幕，按帧批量写入 DOM
@@ -181,9 +234,85 @@ export class ChatPanel {
     if (this.visible) this.refreshAuth();
     else {
       this.queue = [];
-      cancelAnimationFrame(this.flushRaf);
-      this.flushRaf = 0;
+      this.cancelFlush();
     }
+  }
+
+  get floating() {
+    return !!this.pipWindow;
+  }
+
+  setStatsMode(mode) {
+    this.statsMode = mode === 'party' ? 'party' : 'room';
+    const party = this.statsMode === 'party';
+    const button = this.tools.statsMode;
+    button.classList.toggle('on', party);
+    button.setAttribute('aria-pressed', String(party));
+    button.setAttribute('aria-label', party ? '切换到房间统计' : '切换到聚会统计');
+    button.title = party
+      ? '切换到房间统计：显示当前直播间的今日统计与榜单'
+      : '切换到聚会统计：汇总所有已打开直播间的今日流水、贵宾、钻粉';
+    this.ranks.setMode(this.statsMode);
+  }
+
+  // rooms: [{ rid, label, vip, diamond }]
+  setPartyRooms(rooms) {
+    this.ranks.setPartyRooms(rooms);
+  }
+
+  async setFloating(on) {
+    if (!FLOAT_SUPPORTED || on === this.floating || this.floatPending) return;
+    if (!on) {
+      this.pipWindow.close(); // pagehide 里放回原位
+      return;
+    }
+    this.floatPending = true;
+    let pip;
+    try {
+      pip = await window.documentPictureInPicture.requestWindow(FLOAT_SIZE);
+    } catch (error) {
+      this.showHint(`悬浮窗打开失败：${error?.message || error}`, { error: true });
+      return;
+    } finally {
+      this.floatPending = false;
+    }
+    pip.document.title = '聊天窗 - 斗鱼同屏';
+    pip.document.documentElement.lang = document.documentElement.lang;
+    pip.document.body.classList.add('chat-float-body');
+    copyPageAssets(pip);
+    this.cancelFlush();
+    this.placeholder = document.createComment('chat-panel');
+    this.panel.before(this.placeholder);
+    this.panel.classList.add('floating');
+    pip.document.body.append(this.panel);
+    this.pipWindow = pip;
+    pip.addEventListener('pagehide', () => this.dock(), { once: true });
+    this.syncFloatButton();
+    if (this.queue.length) this.scheduleFlush();
+    this.list.scrollTop = this.list.scrollHeight;
+    this.onFloatChange(true);
+  }
+
+  dock() {
+    if (!this.pipWindow) return;
+    this.cancelFlush();
+    this.pipWindow = null;
+    this.panel.classList.remove('floating');
+    this.placeholder.replaceWith(this.panel);
+    this.placeholder = null;
+    this.syncFloatButton();
+    if (this.queue.length) this.scheduleFlush();
+    this.list.scrollTop = this.list.scrollHeight;
+    this.onFloatChange(false);
+  }
+
+  syncFloatButton() {
+    const button = this.tools.float;
+    const on = this.floating;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.setAttribute('aria-label', on ? '退出悬浮模式' : '悬浮模式');
+    button.title = on ? '退出悬浮模式：聊天窗放回网页右侧' : '悬浮模式：把聊天窗分离成置顶小窗，节省网页显示空间';
   }
 
   async refreshAuth() {

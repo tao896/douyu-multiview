@@ -420,6 +420,11 @@ export class Tile {
     this.onRanks(this, rank.type);
   }
 
+  // 聚会统计用：取一次榜单快照更新贵宾 / 钻粉人数，客户端自带频率限制
+  refreshRankSnapshot() {
+    this.dm?.fetchRankSnapshot();
+  }
+
   setRanksWanted(wanted) {
     this.ranksWanted = !!wanted;
     this.dm?.setRanksWanted(this.ranksWanted);

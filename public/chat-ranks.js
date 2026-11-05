@@ -1,4 +1,4 @@
-// 聊天窗顶部：今日统计 + 在线榜 / 活跃榜 / 贵宾 / 钻粉
+// 聊天窗顶部：房间统计（今日统计 + 在线榜 / 活跃榜 / 贵宾 / 钻粉）或聚会统计（所有已打开直播间汇总）
 import { fetchRoomStats, STATS_SOURCE } from './room-stats.js';
 import { isAbortError } from './net.js';
 
@@ -37,19 +37,40 @@ function el(tag, className, text) {
   return node;
 }
 
+// 斗鱼部分人数是「3.9万」这样的文本，合计时换算成数字
+function countValue(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  if (Number.isFinite(number)) return number;
+  const match = /^([\d.]+)万$/.exec(String(value).trim());
+  return match ? Number(match[1]) * 1e4 : null;
+}
+
+function sumKnown(values) {
+  const known = values.filter((value) => value != null && Number.isFinite(value));
+  return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
+}
+
 export class ChatRanks {
-  constructor(root) {
+  // onPartyRefresh：聚会统计刷新时通知外部更新各房间的贵宾 / 钻粉人数
+  constructor(root, { onPartyRefresh = () => {} } = {}) {
     this.root = root;
+    this.onPartyRefresh = onPartyRefresh;
     this.statsEl = root.querySelector('[data-chat-stats]');
     this.list = root.querySelector('[data-rank-list]');
+    this.tabsEl = root.querySelector('.chat-rank-tabs');
+    this.partyEl = root.querySelector('[data-chat-party]');
     this.tabs = [...root.querySelectorAll('[data-rank-tab]')];
     this.tab = 'online';
+    this.mode = 'room';
     this.rid = '';
     this.ranks = {};
+    this.partyRooms = [];
+    this.partyKey = '';
     this.visible = false;
     this.statsCache = new Map();
     this.statsTimer = 0;
-    this.statsController = null;
+    this.statsPending = new Map();
     this.tabs.forEach((button) => button.addEventListener('click', () => this.selectTab(button.dataset.rankTab)));
     // 头像加载失败时只隐藏图片，保留占位
     this.list.addEventListener('error', (event) => {
@@ -67,7 +88,31 @@ export class ChatRanks {
     this.list.scrollTop = 0;
     this.renderRanks();
     this.renderStats();
-    if (this.visible) this.loadStats();
+    this.renderParty({ force: true });
+    if (this.visible && this.mode === 'room') this.loadStats();
+  }
+
+  // mode: 'room' 当前直播间统计与榜单；'party' 所有已打开直播间的今日流水 / 贵宾 / 钻粉
+  setMode(mode) {
+    const next = mode === 'party' ? 'party' : 'room';
+    if (next === this.mode) return;
+    this.mode = next;
+    const party = next === 'party';
+    this.statsEl.hidden = party;
+    this.tabsEl.hidden = party;
+    this.list.hidden = party;
+    this.partyEl.hidden = !party;
+    if (party) this.renderParty({ force: true });
+    else this.renderStats();
+    if (this.visible) this.restartStats();
+  }
+
+  // rooms: [{ rid, label, vip, diamond }]，按播放窗口顺序
+  setPartyRooms(rooms = []) {
+    const added = rooms.some((room) => !this.partyRooms.some((item) => item.rid === room.rid));
+    this.partyRooms = rooms;
+    this.renderParty();
+    if (added && this.visible && this.mode === 'party') this.loadStats();
   }
 
   // ranks: tile.ranks，{ online|active|vip|diamond: { count, list, updatedAt } }
@@ -78,12 +123,17 @@ export class ChatRanks {
 
   setVisible(visible) {
     this.visible = !!visible;
-    clearInterval(this.statsTimer);
-    this.statsTimer = 0;
-    if (!this.visible) {
-      this.statsController?.abort();
-      return;
+    if (this.visible) this.restartStats();
+    else {
+      clearInterval(this.statsTimer);
+      this.statsTimer = 0;
+      for (const controller of this.statsPending.values()) controller.abort();
+      this.statsPending.clear();
     }
+  }
+
+  restartStats() {
+    clearInterval(this.statsTimer);
     this.loadStats();
     this.statsTimer = setInterval(() => this.loadStats({ force: true }), STATS_REFRESH_MS);
   }
@@ -95,14 +145,22 @@ export class ChatRanks {
     this.renderRanks();
   }
 
-  async loadStats({ force = false } = {}) {
-    const rid = this.rid;
-    if (!rid) return;
+  loadStats({ force = false } = {}) {
+    if (this.mode === 'party') {
+      this.onPartyRefresh();
+      this.partyRooms.forEach((room) => this.loadRoomStats(room.rid, { force }));
+    } else if (this.rid) {
+      this.loadRoomStats(this.rid, { force });
+    }
+  }
+
+  async loadRoomStats(rid, { force = false } = {}) {
     const cached = this.statsCache.get(rid);
-    if (!force && cached && Date.now() - cached.at < STATS_CACHE_MS) return this.renderStats();
-    this.statsController?.abort();
+    if (this.statsPending.has(rid) || (!force && cached && Date.now() - cached.at < STATS_CACHE_MS)) {
+      return this.renderCurrent();
+    }
     const controller = new AbortController();
-    this.statsController = controller;
+    this.statsPending.set(rid, controller);
     try {
       const stats = await fetchRoomStats(rid, { signal: controller.signal });
       this.statsCache.set(rid, { at: Date.now(), stats, error: '' });
@@ -111,9 +169,14 @@ export class ChatRanks {
       // 刷新失败时保留上次成功的数据
       this.statsCache.set(rid, { at: Date.now(), stats: cached?.stats, error: error?.message || '请求失败' });
     } finally {
-      if (this.statsController === controller) this.statsController = null;
+      if (this.statsPending.get(rid) === controller) this.statsPending.delete(rid);
     }
-    if (rid === this.rid) this.renderStats();
+    this.renderCurrent();
+  }
+
+  renderCurrent() {
+    if (this.mode === 'party') this.renderParty();
+    else this.renderStats();
   }
 
   renderStats() {
@@ -151,6 +214,59 @@ export class ChatRanks {
       entry.error ? `最近一次刷新失败：${entry.error}` : '',
       `数据来自 ${STATS_SOURCE}，流水按礼物价值折算，不是主播实际收入，仅供参考`,
     ].filter(Boolean).join('\n');
+  }
+
+  partyIncome(rid) {
+    const entry = this.statsCache.get(rid);
+    if (!entry) return { value: null, text: '…', title: '今日流水加载中' };
+    if (!entry.stats) {
+      return { value: null, text: '—', title: entry.error ? `加载失败：${entry.error}` : `${STATS_SOURCE} 未收录本直播间` };
+    }
+    return { value: entry.stats.income, text: formatMoney(entry.stats.income), title: '' };
+  }
+
+  // 榜单消息频繁到达，内容不变时不重绘
+  renderParty({ force = false } = {}) {
+    if (this.mode !== 'party') return;
+    const rows = this.partyRooms.map((room) => {
+      const income = this.partyIncome(room.rid);
+      // 钻粉人数优先用弹幕榜单，未拿到时用数据站的钻粉总数
+      const diamond = room.diamond ?? this.statsCache.get(room.rid)?.stats?.diamond ?? null;
+      return { ...room, income, diamond };
+    });
+    const key = JSON.stringify([this.rid, rows.map((row) => [row.rid, row.label, row.income.text, row.income.title, row.vip, row.diamond])]);
+    if (!force && key === this.partyKey) return;
+    this.partyKey = key;
+    if (!rows.length) {
+      this.partyEl.replaceChildren(el('p', 'chat-rank-empty', '打开直播间后显示聚会统计'));
+      return;
+    }
+    const table = el('table', 'chat-party-table');
+    const head = el('tr');
+    for (const text of ['主播', '今日流水', '贵宾', '钻粉']) head.append(el('th', '', text));
+    table.createTHead().append(head);
+    const body = table.createTBody();
+    for (const row of rows) {
+      const tr = el('tr', row.rid === this.rid ? 'current' : '');
+      const name = el('td', 'chat-party-name', row.label);
+      name.title = `${row.label}（${row.rid}）`;
+      const income = el('td', '', row.income.text);
+      if (row.income.title) income.title = row.income.title;
+      tr.append(name, income, el('td', '', formatCount(row.vip)), el('td', '', formatCount(row.diamond)));
+      body.append(tr);
+    }
+    if (rows.length > 1) {
+      const total = el('tr', 'chat-party-total');
+      total.append(
+        el('td', 'chat-party-name', `合计（${rows.length} 间）`),
+        el('td', '', formatMoney(sumKnown(rows.map((row) => row.income.value)))),
+        el('td', '', formatCount(sumKnown(rows.map((row) => countValue(row.vip))))),
+        el('td', '', formatCount(sumKnown(rows.map((row) => countValue(row.diamond))))),
+      );
+      table.createTFoot().append(total);
+    }
+    this.partyEl.title = `今日流水来自 ${STATS_SOURCE}（北京时间统计日），按礼物价值折算，仅供参考；贵宾、钻粉为直播间实时人数`;
+    this.partyEl.replaceChildren(table);
   }
 
   tabCount(tab) {

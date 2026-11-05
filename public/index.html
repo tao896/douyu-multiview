@@ -83,6 +83,14 @@
     <path d="M12 3a5.5 5.5 0 0 0-5.5 5.5v3.2L5 15.5h14l-1.5-3.8V8.5A5.5 5.5 0 0 0 12 3Z"/>
     <path d="M9.8 18.4a2.4 2.4 0 0 0 4.4 0"/>
   </symbol>
+  <symbol id="icon-float" viewBox="0 0 24 24">
+    <path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>
+    <path d="M14 4h6v6M20 4l-7 7"/>
+  </symbol>
+  <symbol id="icon-party" viewBox="0 0 24 24">
+    <circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-3.4 2.5-5 5.5-5s4.9 1.6 5.5 5"/>
+    <path d="M15 5.3a3 3 0 0 1 0 5.4M17 14.3c2 .6 3.1 2.2 3.5 4.7"/>
+  </symbol>
   <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></symbol>
   <symbol id="icon-user" viewBox="0 0 24 24">
     <circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-4 3.3-6 7.5-6s6.7 2 7.5 6"/>
@@ -305,6 +313,14 @@
   <aside class="chat-panel" id="chatPanel" aria-label="直播间聊天" inert>
     <div class="chat-head">
       <select id="chatRoomSelect" aria-label="选择聊天的直播间" disabled></select>
+      <button class="chat-tool-icon" type="button" id="chatStatsModeBtn" aria-pressed="false"
+              aria-label="切换到聚会统计" title="切换到聚会统计：汇总所有已打开直播间的今日流水、贵宾、钻粉">
+        <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-party"/></svg>
+      </button>
+      <button class="chat-tool-icon" type="button" id="chatFloatBtn" aria-pressed="false"
+              aria-label="悬浮模式" title="悬浮模式：把聊天窗分离成置顶小窗，节省网页显示空间">
+        <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-float"/></svg>
+      </button>
       <button class="sidebar-toggle" id="chatHideBtn" type="button"
               aria-controls="chatPanel" title="隐藏聊天窗（C）" aria-label="隐藏聊天窗">»</button>
     </div>
@@ -317,6 +333,7 @@
         <button type="button" role="tab" data-rank-tab="diamond"><span>钻粉</span><b data-rank-count>—</b></button>
       </div>
       <div class="chat-rank-list" data-rank-list role="tabpanel"></div>
+      <div class="chat-party" data-chat-party aria-label="聚会统计" hidden></div>
     </section>
     <div class="chat-list" id="chatList" role="log" aria-live="off"></div>
     <p class="chat-empty" id="chatEmpty">打开直播间后，可在这里查看和发送弹幕</p>
