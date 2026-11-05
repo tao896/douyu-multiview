@@ -963,24 +963,29 @@ body.room-dragging { user-select: none; cursor: grabbing; }
 .room-watermark {
   position: absolute;
   z-index: 1;
-  right: 12px;
-  bottom: 12px;
-  max-width: calc(100% - 24px);
+  right: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
   overflow: hidden;
+  padding: 0 6px;
+  border-radius: 4px;
+  /* 白字 + 半透明深色底 + 描边阴影：不依赖画面颜色，高饱和亮色画面上也保持对比度。
+     不用 mix-blend-mode: difference，它在中间调/高饱和色上会让文字与画面混成一片。 */
   color: #fff;
-  /* 让文字在明暗画面上自动反转，保持稳定对比度。旧浏览器会回退到白字。 */
-  mix-blend-mode: difference;
-  opacity: .82;
-  font-size: 14px;
-  line-height: 1.5;
-  text-shadow: 0 0 2px rgba(0, 0, 0, .9), 0 1px 3px rgba(0, 0, 0, .75);
+  background: rgba(0, 0, 0, .45);
+  font-size: 12px;
+  line-height: 1.4;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, .85), 1px -1px 0 rgba(0, 0, 0, .85),
+    -1px 1px 0 rgba(0, 0, 0, .85), 1px 1px 0 rgba(0, 0, 0, .85),
+    0 0 3px rgba(0, 0, 0, .9);
   white-space: nowrap;
   text-overflow: ellipsis;
   pointer-events: none;
   user-select: none;
 }
 
-.room-stats { top: 12px; bottom: auto; text-align: right; }
+.room-stats { top: 8px; bottom: auto; text-align: right; }
 .room-stats span { display: block; }
 body.room-stats-hidden .room-stats { display: none; }
 
