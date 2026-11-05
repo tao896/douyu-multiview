@@ -174,7 +174,11 @@ export class Tile {
 
     this.$.vol.addEventListener('input', () => this.setVolume(Number(this.$.vol.value)));
     this.$.opacity.addEventListener('input', () => this.setOpacity(Number(this.$.opacity.value) / 100));
-    this.$.rate.addEventListener('change', () => this.setRate(Number(this.$.rate.value)));
+    this.$.rate.addEventListener('change', () => {
+      this.setRate(Number(this.$.rate.value));
+      // 选完清晰度就交还焦点，否则下拉框会继续吞掉全局快捷键
+      this.$.rate.blur();
+    });
     // 点画面：没在播就起播，否则切静音（多窗口下最顺手的操作）
     this.$.video.addEventListener('click', () => {
       if (this.$.video.paused) this.$.video.play().catch(() => {});

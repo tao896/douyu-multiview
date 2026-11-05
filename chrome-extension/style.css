@@ -802,6 +802,8 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   transition: border-color .18s ease, box-shadow .18s ease;
   contain: layout paint;
 }
+/* 窗口本身只作为程序定位的焦点目标（tabIndex=-1），按键后不显示浏览器默认焦点框 */
+.tile:focus { outline: none; }
 .tile:hover,
 .tile:focus-within {
   border-color: var(--line);

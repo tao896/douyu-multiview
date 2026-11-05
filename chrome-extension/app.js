@@ -1860,9 +1860,15 @@ $('danmakuAllBtn').addEventListener('click', toggleDanmakuAll);
 $('reloadAllBtn').addEventListener('click', reloadAll);
 
 // —— 快捷键 ——
+// 只有会消费字符按键的控件才拦截全局快捷键；滑块、复选框、按钮等点过后焦点会留在上面，
+// 不能因此让快捷键失效。
+const NON_TEXT_INPUT_TYPES = new Set([
+  'range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image',
+]);
 function isEditableTarget(target) {
-  return target instanceof HTMLElement &&
-    (target.matches('input, textarea, select') || target.isContentEditable);
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target.matches('textarea, select')) return true;
+  return target instanceof HTMLInputElement && !NON_TEXT_INPUT_TYPES.has(target.type);
 }
 
 function closeTopDialog() {
