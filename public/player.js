@@ -33,6 +33,15 @@ const REANCHOR_LEAD_MS = 30;
 const REANCHOR_TOLERANCE_SECONDS = 0.3;
 const REANCHOR_MIN_BUFFER_SECONDS = 0.3;
 const AUDIO_GAP_MS = 2;
+// 延迟对齐：各窗口按本地缓冲积压追到同一档低延迟。只能消除浏览器端积压，
+// 主播推流和 CDN 本身的延迟差无法测量，也无法对齐。
+// 积压超过 CHASE_START 时微调倍速追帧，回到 CHASE_STOP 以下恢复 1×；
+// 超过 STALE_LATENCY_SECONDS 仍由看门狗跳到缓冲尾部。
+const CHASE_START_SECONDS = 1.5;
+const CHASE_STOP_SECONDS = 0.8;
+const CHASE_RATE = 1.1;
+// 跳到最新关键帧时，关键帧之后至少要有这么多已缓冲数据，避免落点后立刻卡顿
+const CHASE_MIN_TAIL_SECONDS = 0.5;
 
 const filteredConsoleMethods = new WeakSet();
 const AUDIO_OVERLAP_WARNING = /^\[MP4Remuxer\] > Dropping 1 audio frame .*due to dtsCorrection: .* overlap\.?$/;
@@ -180,6 +189,9 @@ export class Player {
     this.lastVisibilityRecoveryAt = -Infinity;
     this.lastVisibilityRecoveryReason = '';
     this.syncEvents = [];
+    this.latencyChase = false;
+    this.chasing = false;
+    this.liveJumpCount = 0;
     this.syncTimer = 0;
     this.syncRebuildCount = 0;
     this.lastSyncRebuildAt = -Infinity;
@@ -262,6 +274,7 @@ export class Player {
       this.observeTimeline(mp);
       this.video.muted = wasMuted;
       this.video.volume = wasVolume;
+      this.chasing = false;
       this.video.playbackRate = 1;
       this.startSyncMonitor();
 
@@ -459,6 +472,43 @@ export class Player {
     }, Math.max(0, (keyframe - current) * 1000 - REANCHOR_LEAD_MS));
   }
 
+  setLatencyChase(enabled) {
+    this.latencyChase = !!enabled;
+    if (!this.latencyChase) this.setChasing(false);
+    else this.jumpToLive('开启延迟对齐');
+  }
+
+  setChasing(on) {
+    if (this.chasing === on) return;
+    this.chasing = on;
+    try { this.video.playbackRate = on ? CHASE_RATE : 1; } catch {}
+  }
+
+  // 由同步定时器每秒调用：开启延迟对齐时用倍速把缓冲积压收回到低延迟档位。
+  maintainLatency() {
+    const v = this.video;
+    const blocked = !this.latencyChase || this.destroyed || !this.mp || this.retryTimer || this.reanchorTimer ||
+      !this.pageVisible || v.paused || v.seeking || v.readyState < 3;
+    if (blocked) return this.setChasing(false);
+    const latency = this.liveLatency();
+    if (latency > CHASE_START_SECONDS) this.setChasing(true);
+    else if (latency < CHASE_STOP_SECONDS) this.setChasing(false);
+  }
+
+  // 跳到缓冲区里最新的关键帧：只落在关键帧上，Chrome 无需预滚整个 GOP，多路时不会集体卡顿。
+  // 返回是否真的跳了；积压不足以跳过一个关键帧时由倍速追帧处理。
+  jumpToLive(reason = '跳到最新画面') {
+    const v = this.video;
+    if (this.destroyed || !this.mp || this.retryTimer || v.seeking || v.readyState < 2) return false;
+    const current = v.currentTime;
+    const keyframe = this.keyframeTimes.findLast?.((time) => time > current + CHASE_STOP_SECONDS &&
+      this.bufferedAfter(time) >= CHASE_MIN_TAIL_SECONDS);
+    if (keyframe == null) return false;
+    this.liveJumpCount++;
+    this.reanchor(keyframe + 0.001, reason);
+    return true;
+  }
+
   // time 所在缓冲区间在 time 之后还有多少秒数据。
   bufferedAfter(time) {
     const ranges = this.video.buffered;
@@ -544,6 +594,7 @@ export class Player {
       }
       this.sampleSync();
       this.maintainAnchor();
+      this.maintainLatency();
     }, SYNC_OBSERVE_MS);
   }
 
@@ -857,6 +908,9 @@ export class Player {
       syncRebuildCount: this.syncRebuildCount,
       renderLagSeconds: this.renderLagSeconds,
       reanchorCount: this.reanchorCount,
+      latencyChase: this.latencyChase,
+      chasing: this.chasing,
+      liveJumpCount: this.liveJumpCount,
       audioConfigChanges: this.audioConfigChanges,
       audioGapMs: this.audioGapMs,
       videoFps: this.videoFps,
@@ -896,6 +950,7 @@ export class Player {
     // element first can race a queued appendBuffer and leave Chrome with a
     // detached SourceBuffer (followed by a null.length exception).
     try {
+      this.chasing = false;
       this.video.playbackRate = 1;
       this.video.pause();
       this.video.removeAttribute('src');

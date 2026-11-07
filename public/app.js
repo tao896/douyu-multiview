@@ -4,11 +4,12 @@ import { ChatPanel } from './chat-panel.js';
 import { Tile } from './tile.js';
 import { fetchJson, isAbortError } from './net.js';
 import { RoomStatusScheduler } from './room-scheduler.js';
+import { installRoomDrag } from './room-drag.js';
+import { diagnosticCells, diagnosticSummary, diagnosticsText } from './diagnostics.js';
 import {
   STORAGE_KEY_V1,
   STORAGE_KEY_V2,
   STORAGE_KEY_V3,
-  autoScrollDelta,
   cloneWorkspace,
   createBackup,
   createWorkspace,
@@ -93,7 +94,6 @@ let batchMode = false;
 let mobileSidebarOpen = false;
 let savingBlocked = false;
 let dragging = null;
-let roomDrag = null;
 let soloTile = null;
 let soloSnapshot = new Map();
 let scheduler = null;
@@ -147,6 +147,7 @@ function snapshotActiveWorkspace() {
   current.focusedRid = current.layoutMode === 'focus' ? preferredFocusRid : '';
   current.danmakuSpeed = Number($('danmakuSpeedSelect').value) || 1;
   current.ecoMode = $('ecoModeBtn').classList.contains('on');
+  current.latencyChase = latencyChaseEnabled();
 }
 
 let saveTimer = 0;
@@ -614,8 +615,8 @@ function createSidebarEntry(room) {
   entry.remove.addEventListener('click', () => deleteRoom(room));
   entry.notify.addEventListener('click', () => toggleRoomNotification(room));
   // 拖动把手和头像/名称区域都能排序；提醒、删除、选择按钮不参与拖动
-  entry.drag.addEventListener('pointerdown', (event) => startRoomDrag(room, event));
-  entry.open.addEventListener('pointerdown', (event) => startRoomDrag(room, event));
+  entry.drag.addEventListener('pointerdown', (event) => roomDrag.start(room, event));
+  entry.open.addEventListener('pointerdown', (event) => roomDrag.start(room, event));
   // 原生图片拖拽会盖住指针事件，直接禁用
   el.addEventListener('dragstart', (event) => event.preventDefault());
   // 手柄是按钮，键盘用户也能用上下方向键调整顺序
@@ -705,11 +706,6 @@ function syncRoomListOrder() {
   syncAllSidebarRooms();
 }
 
-function clearRoomDropMarks() {
-  roomList.querySelectorAll('.drop-before, .drop-after')
-    .forEach((node) => node.classList.remove('drop-before', 'drop-after'));
-}
-
 function moveRoom(room, delta) {
   const from = rooms.indexOf(room);
   const target = rooms[from + delta];
@@ -725,146 +721,14 @@ function applyRoomOrder(next) {
   save();
 }
 
-// —— 侧栏拖动排序 ——
-// 只按当前可见行的中点判断插入位置：筛选状态下把房间放到目标房间旁边，
-// 其余（含被筛掉的）房间保持原有相对顺序。
-function resolveRoomDrop(clientY) {
-  const visible = visibleRooms()
-    .map((room) => ({ room, el: roomEntries.get(room)?.el }))
-    .filter((item) => item.el && !item.el.hidden);
-  if (!visible.length) return null;
-  let target = visible[visible.length - 1];
-  let position = 'after';
-  for (const item of visible) {
-    const rect = item.el.getBoundingClientRect();
-    if (clientY < rect.top + rect.height / 2) {
-      target = item;
-      position = 'before';
-      break;
-    }
-  }
-  return { target: target.room, position };
-}
-
-function showRoomDropMark(target, position) {
-  clearRoomDropMarks();
-  roomEntries.get(target)?.el.classList.add(position === 'before' ? 'drop-before' : 'drop-after');
-}
-
-function autoScrollRoomList() {
-  if (!roomDrag) return;
-  const rect = roomList.getBoundingClientRect();
-  const delta = autoScrollDelta(roomDrag.y, rect.top, rect.bottom);
-  if (!delta) return;
-  const before = roomList.scrollTop;
-  roomList.scrollTop += delta;
-  return roomList.scrollTop !== before;
-}
-
-function updateRoomDrag(clientY) {
-  if (!roomDrag) return;
-  roomDrag.y = clientY;
-  autoScrollRoomList();
-  const drop = resolveRoomDrop(clientY);
-  roomDrag.target = drop?.target || null;
-  roomDrag.position = drop?.position || 'after';
-  if (drop) showRoomDropMark(drop.target, drop.position);
-  else clearRoomDropMarks();
-}
-
-function autoScrollTick() {
-  if (!roomDrag) return;
-  autoScrollRoomList();
-  const drop = resolveRoomDrop(roomDrag.y);
-  if (drop) {
-    roomDrag.target = drop.target;
-    roomDrag.position = drop.position;
-    showRoomDropMark(drop.target, drop.position);
-  }
-  roomDrag.raf = requestAnimationFrame(autoScrollTick);
-}
-
-function endRoomDrag({ commit = true } = {}) {
-  if (!roomDrag) return;
-  cancelAnimationFrame(roomDrag.raf);
-  const { room, target, position } = roomDrag;
-  roomDrag = null;
-  // 指针捕获由浏览器在 pointerup/pointercancel 时自动释放，无需手动 release
-  document.body.classList.remove('room-dragging');
-  roomEntries.get(room)?.el.classList.remove('dragging');
-  clearRoomDropMarks();
-  if (!commit || !target || target === room) return;
-  applyRoomOrder(reorderRooms(rooms, room, target, position));
-}
-
-function startRoomDrag(room, event) {
-  if (event.button !== 0 && event.pointerType === 'mouse') return;
-  const entry = roomEntries.get(room);
-  if (!entry || entry.el.hidden) return;
-  // 这里既不 preventDefault 也不捕获指针：否则浏览器会把随后的 click 重定向到
-  // 拖动把手上，行内“打开/定位”按钮永远收不到点击。只有指针真正移动超过阈值
-  // 才进入拖动状态（见 beginRoomDrag），单击仍然走各自的 click 处理。
-  roomDrag = {
-    room,
-    pointerId: event.pointerId,
-    captureTarget: entry.drag,
-    startX: event.clientX,
-    startY: event.clientY,
-    x: event.clientX,
-    y: event.clientY,
-    target: null,
-    position: 'after',
-    raf: 0,
-    moved: false,
-  };
-}
-
-// 指针移动超过阈值后才算拖动：此时才阻止默认行为、捕获指针并显示拖动样式。
-function beginRoomDrag() {
-  if (!roomDrag) return;
-  const { room, pointerId, captureTarget } = roomDrag;
-  roomDrag.moved = true;
-  captureTarget?.setPointerCapture?.(pointerId);
-  document.body.classList.add('room-dragging');
-  roomEntries.get(room)?.el.classList.add('dragging');
-  roomDrag.raf = requestAnimationFrame(autoScrollTick);
-}
-
-function onRoomDragMove(event) {
-  if (!roomDrag || event.pointerId !== roomDrag.pointerId) return;
-  if (!roomDrag.moved) {
-    if (Math.hypot(event.clientX - roomDrag.startX, event.clientY - roomDrag.startY) < 4) return;
-    beginRoomDrag();
-  }
-  event.preventDefault();
-  updateRoomDrag(event.clientY);
-}
-
-function onRoomDragEnd(event) {
-  if (!roomDrag || event.pointerId !== roomDrag.pointerId) return;
-  const moved = roomDrag.moved;
-  endRoomDrag();
-  // 拖动结束后浏览器可能补发一次 click（触屏尤其明显）；吞掉紧接着的那一次，
-  // 避免拖动结束时误触打开房间、提醒或删除。下一次 pointerdown 会解除标记，
-  // 因此不会影响随后的正常点击。
-  if (moved) suppressNextRoomClick = true;
-}
-
-// 一次真实拖动后的 click 不应触发任何行内操作（打开、提醒、删除）
-let suppressNextRoomClick = false;
-
-document.addEventListener('pointerdown', () => { suppressNextRoomClick = false; }, true);
-document.addEventListener('click', (event) => {
-  if (!suppressNextRoomClick) return;
-  suppressNextRoomClick = false;
-  if (!event.target.closest?.('.room-row')) return;
-  event.stopPropagation();
-  event.preventDefault();
-}, true);
-
-document.addEventListener('pointermove', onRoomDragMove, { passive: false });
-document.addEventListener('pointerup', onRoomDragEnd);
-document.addEventListener('pointercancel', () => endRoomDrag({ commit: false }));
+// —— 侧栏拖动排序（见 room-drag.js）——
+const roomDrag = installRoomDrag({
+  list: roomList,
+  visibleRooms,
+  entryEl: (room) => roomEntries.get(room)?.el,
+  dragHandle: (room) => roomEntries.get(room)?.drag,
+  onDrop: (room, target, position) => applyRoomOrder(reorderRooms(rooms, room, target, position)),
+});
 
 function copyTileSettingsToRoom(tile, room) {
   // 提醒由侧栏管理；播放器持有创建时的副本，不能反向覆盖新的开关值。
@@ -937,6 +801,7 @@ function openRoom(room, { persist = true } = {}) {
   applyLayout();
   syncBatchRates();
   scheduleEco(tile);
+  tile.player.setLatencyChase(latencyChaseEnabled());
   syncSidebarRoom(room);
   syncEmpty();
   syncChatRooms();
@@ -1127,6 +992,7 @@ function loadWorkspaceRuntime(current) {
   $('danmakuSpeedSelect').value = String(current.danmakuSpeed || 1);
   $('ecoModeBtn').classList.toggle('on', !!current.ecoMode);
   $('ecoModeBtn').setAttribute('aria-pressed', String(!!current.ecoMode));
+  $('latencyChaseBtn').classList.toggle('on', !!current.latencyChase);
   setToolbarHidden(current.toolbarHidden, { persist: false });
   setShowRoomStats(current.showRoomStats, { persist: false });
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
@@ -1149,6 +1015,7 @@ function loadWorkspaceRuntime(current) {
   chatPanel.setPreferredRid(chatTile ? chatTile.s.rid : '');
   syncChatRooms();
   syncEcoButton();
+  syncLatencyChaseButton();
   syncBatchRates();
   rooms.forEach((room) => {
     if (getOpenTile(room)) scheduler?.markChecked(room);
@@ -1574,6 +1441,33 @@ $('ecoModeBtn').addEventListener('click', () => {
   save({ immediate: true });
 });
 
+// —— 延迟对齐 ——
+// 开启后各窗口跳到最新关键帧，并用 1.1× 倍速把本地缓冲积压保持在 1.5 秒内。
+// 只能对齐浏览器端积压；主播推流与 CDN 的延迟差无法消除。
+function latencyChaseEnabled() {
+  return $('latencyChaseBtn').classList.contains('on');
+}
+
+function syncLatencyChaseButton() {
+  const enabled = latencyChaseEnabled();
+  $('latencyChaseBtn').setAttribute('aria-pressed', String(enabled));
+  setToolbarButtonLabel(
+    'latencyChaseBtn',
+    enabled ? '关闭延迟对齐' : '延迟对齐',
+    enabled ? '延迟对齐已开启，点击关闭' : '开启延迟对齐：各窗口追到最新画面并保持低延迟'
+  );
+  tiles.forEach((tile) => tile.player.setLatencyChase(enabled));
+}
+
+function toggleLatencyChase() {
+  $('latencyChaseBtn').classList.toggle('on');
+  syncLatencyChaseButton();
+  save({ immediate: true });
+  toast(latencyChaseEnabled() ? '已开启延迟对齐' : '已关闭延迟对齐');
+}
+
+$('latencyChaseBtn').addEventListener('click', toggleLatencyChase);
+
 // —— 批量清晰度 ——
 function syncBatchRates() {
   const select = $('batchRateSelect');
@@ -1669,27 +1563,11 @@ $('importDialog').addEventListener('close', async () => {
 });
 
 // —— 连接与性能诊断 ——
-const STATE_LABELS = {
-  loading: '缓冲中', playing: '播放中', blocked: '待播放', retrying: '重连中',
-  suspended: '已暂停', offline: '未开播', error: '出错',
-};
-
 function collectDiagnostics() {
   return tiles.map((tile) => ({
     ...tile.diagnostics(),
     lastCheckedAt: tileRooms.get(tile)?.lastCheckedAt || 0,
   }));
-}
-
-function diagnosticSummary(items = collectDiagnostics()) {
-  const count = (states) => items.filter((item) => states.includes(item.state)).length;
-  return {
-    playing: count(['playing']),
-    pending: count(['loading', 'blocked', 'retrying', 'suspended']),
-    offline: count(['offline']),
-    error: count(['error']),
-    total: items.length,
-  };
 }
 
 function renderDiagnostics() {
@@ -1700,18 +1578,7 @@ function renderDiagnostics() {
   $('diagnosticsList').replaceChildren(...items.map((item) => {
     const row = document.createElement('div');
     row.className = `diagnostic-row${item.state === 'error' ? ' error' : ''}`;
-    const values = [
-      item.title,
-      STATE_LABELS[item.state] || item.state,
-      item.rateName || '未知清晰度',
-      item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知',
-      `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
-      `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
-      `音画同步 ${item.syncStatus === 'audio-leading' ? '声音领先' : item.syncStatus === 'video-leading' ? '画面领先' : item.syncStatus === 'normal' ? '正常' : '无法测量'}${item.syncOffsetSeconds == null ? '' : ` (${(item.syncOffsetSeconds * 1000).toFixed(0)}ms)`}${item.syncRebuildCount ? ` · 偏差重建 ${item.syncRebuildCount} 次` : ""}${item.renderLagSeconds == null ? "" : ` · 画面滞后 ${(item.renderLagSeconds * 1000).toFixed(0)}ms`}${item.reanchorCount ? ` · 重新锚定 ${item.reanchorCount} 次` : ""}${item.audioConfigChanges ? ` · 音频配置切换 ${item.audioConfigChanges} 次` : ""}${item.audioGapMs ? ` · 音频断档 ${Math.round(item.audioGapMs)}ms` : ""}`,
-      item.lastRecoveryReason ? `最近恢复：${item.lastRecoveryReason}` : '尚未自动校正',
-      item.visibilityRecoveryCount ? `切页追帧 ${item.visibilityRecoveryCount} 次 · ${item.lastVisibilityRecoveryReason}` : '尚未因切页追帧',
-      item.lastCheckedAt ? `检查 ${new Date(item.lastCheckedAt).toLocaleTimeString('zh-CN')}` : '尚未检查',
-    ];
+    const values = diagnosticCells(item);
     values.forEach((value, index) => {
       const node = document.createElement(index === 0 ? 'strong' : 'span');
       node.textContent = value;
@@ -1721,24 +1588,6 @@ function renderDiagnostics() {
     return row;
   }));
   $('retryFailedBtn').disabled = !items.some((item) => item.state === 'error');
-}
-
-function diagnosticsText() {
-  const summary = diagnosticSummary();
-  return [
-    `斗鱼同屏诊断 ${new Date().toISOString()}`,
-    `播放 ${summary.playing} / 总计 ${summary.total}，缓冲/重连 ${summary.pending}，未开播 ${summary.offline}，出错 ${summary.error}`,
-    ...collectDiagnostics().map((item) =>
-      `[${item.rid}] ${item.title} | ${STATE_LABELS[item.state] || item.state} | ${item.rateName || '-'} | ` +
-      `${item.width || 0}x${item.height || 0} | buffer=${item.bufferSeconds.toFixed(1)}s | ` +
-      `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
-      `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
-      `visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +
-      `syncStatus=${item.syncStatus} | syncOffset=${item.syncOffsetSeconds == null ? 'unknown' : item.syncOffsetSeconds.toFixed(3)}s | syncSamples=${item.syncSamples} | syncRebuilds=${item.syncRebuildCount || 0} | renderLag=${item.renderLagSeconds == null ? "unknown" : item.renderLagSeconds.toFixed(3)}s | reanchors=${item.reanchorCount || 0} | audioConfigChanges=${item.audioConfigChanges || 0} | audioGapMs=${Math.round(item.audioGapMs || 0)} | videoFps=${item.videoFps ?? 'unknown'} | silentAacDropped=${item.silentAacDropped || 0} |syncEvents=${JSON.stringify(item.syncEvents || [])} | ` +
-      `checked=${item.lastCheckedAt ? new Date(item.lastCheckedAt).toISOString() : 'never'}` +
-      (item.lastError ? ` | error=${item.lastError}` : '')
-    ),
-  ].join('\n');
 }
 
 function openDiagnostics() {
@@ -1755,7 +1604,7 @@ $('diagnosticsDialog').addEventListener('close', () => {
 });
 $('copyDiagnosticsBtn').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(diagnosticsText());
+    await navigator.clipboard.writeText(diagnosticsText(collectDiagnostics()));
     toast('诊断信息已复制');
   } catch {
     toast('复制失败，请检查浏览器剪贴板权限', 4200, true);
@@ -1821,7 +1670,7 @@ function syncGlobalControls() {
   $('danmakuAllBtn').disabled = !hasTiles;
   $('reloadAllBtn').disabled = !hasTiles;
   $('danmakuAllBtn').setAttribute('aria-pressed', String(anyDanmaku));
-  const summary = diagnosticSummary();
+  const summary = diagnosticSummary(collectDiagnostics());
   setToolbarButtonLabel(
     'diagnosticsBtn',
     `状态 ${summary.playing}/${summary.total}`,
@@ -1923,6 +1772,7 @@ document.addEventListener('keydown', (event) => {
   else if (key === 'm') toggleMuteAll();
   else if (key === 'd') toggleDanmakuAll();
   else if (key === 'r') reloadAll();
+  else if (key === 'l') toggleLatencyChase();
   else if (event.key === '?') $('helpDialog').showModal();
   else if (/^[1-9]$/.test(event.key)) {
     const tile = tiles.filter((item) => !item.el.hidden)[Number(event.key) - 1];

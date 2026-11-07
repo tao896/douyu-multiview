@@ -35,6 +35,9 @@
   <symbol id="icon-leaf" viewBox="0 0 24 24">
     <path d="M20 4C12 4 5 7 5 14a6 6 0 0 0 6 6c7 0 9-8 9-16Z"/><path d="M4 21c2-5 6-9 12-12"/>
   </symbol>
+  <symbol id="icon-sync" viewBox="0 0 24 24">
+    <circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/>
+  </symbol>
   <symbol id="icon-eye" viewBox="0 0 24 24">
     <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>
   </symbol>
@@ -189,6 +192,10 @@
     <button class="ghost toolbar-icon-btn" id="ecoModeBtn" type="button" aria-pressed="false"
             aria-label="低负载" data-tooltip="低负载模式">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-leaf"/></svg>
+    </button>
+    <button class="ghost toolbar-icon-btn" id="latencyChaseBtn" type="button" aria-pressed="false"
+            aria-label="延迟对齐" data-tooltip="开启延迟对齐">
+      <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-sync"/></svg>
     </button>
     <button class="ghost toolbar-icon-btn" id="muteAllBtn" type="button" aria-pressed="false"
             aria-label="全部静音" data-tooltip="全部静音">
@@ -527,6 +534,7 @@
       <div><dt><kbd>M</kbd></dt><dd>全部静音 / 取消静音</dd></div>
       <div><dt><kbd>D</kbd></dt><dd>弹幕全开 / 全关</dd></div>
       <div><dt><kbd>R</kbd></dt><dd>刷新所有窗口</dd></div>
+      <div><dt><kbd>L</kbd></dt><dd>延迟对齐开 / 关</dd></div>
       <div><dt><kbd>1–9</kbd></dt><dd>独听对应窗口</dd></div>
       <div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div>
       <div><dt><kbd>Esc</kbd></dt><dd>关闭面板或清除搜索</dd></div>

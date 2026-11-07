@@ -81,10 +81,8 @@ export function giftFromFields(f) {
   const giftName = unesc(f.gn || f.gfn || f.gnme || f.gname || f.giftname || f.fname || f.gift_name || id || '礼物');
   const image = unesc(f.gifturl || f.gift_url || f.giftpic || f.gift_pic || f.giftimg || f.gift_img || '');
   // dgb 帧不带价格（gs 是展示样式，恒为 0），单价由礼物配置补全；未知时为 null，不参与价值过滤。
-  // 原站 VideoBarrageBanner 使用观众端 wbcstv2（秒）；缺失时 mounted 默认 5000ms。
-  const seconds = Number(f.wbcstv2);
-  const durationMs = Number.isFinite(seconds) && seconds > 0 && seconds * 1000 <= 2147483647 ? seconds * 1000 : 5000;
-  return { id, ...(propId && { propId }), userId: String(f.uid || ''), durationMs, giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: avatarFromIc(f.ic || f.avatar || f.useravatar) };
+  // wbcstv2/abstv2 是展示样式档位，不是秒数；停留时长由 resolveGift 按礼物配置的 hitInterval 补全。
+  return { id, ...(propId && { propId }), userId: String(f.uid || ''), giftName, image, count, value: null, user: unesc(f.nn || f.un || f.username || '匿名用户'), avatar: avatarFromIc(f.ic || f.avatar || f.useravatar) };
 }
 
 // 榜单列表是二层嵌套的 STT：先反转义出条目（/ 分隔），每个条目再反转义出字段

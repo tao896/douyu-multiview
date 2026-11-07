@@ -91,6 +91,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
       ? Number(raw.danmakuSpeed)
       : 1,
     ecoMode: !!raw.ecoMode,
+    latencyChase: !!raw.latencyChase,
     rooms,
     openRids,
     danmaku: normalizeDanmakuConfig(raw.danmaku),

@@ -8,7 +8,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "build:extension": "node build-extension.js",
-    "test": "node --test",
+    "test": "node --import ./test/support/register.js --test test/*.test.js",
     "test:e2e": "playwright test",
     "test:all": "npm test && npm run test:e2e"
   },
