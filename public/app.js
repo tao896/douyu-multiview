@@ -1132,7 +1132,10 @@ function loadWorkspaceRuntime(current) {
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
   setSidebarHidden(current.sidebarHiddenDesktop, { persist: false });
   chatPanelPreferred = !!current.chatPanelOpen;
-  chatPanel.setPreferredRid(current.chatRid);
+  // 打开页面时聊天框跟随布局：焦点布局显示焦点房间，网格布局显示排序第一个
+  chatPanel.setPreferredRid(
+    grid.dataset.layout === 'focus' && current.focusedRid ? current.focusedRid : current.openRids[0]
+  );
   chatPanel.setStatsMode(current.chatStatsMode);
   setChatPanelOpen(chatPanelPreferred && !isMobile(), { persist: false });
   for (const state of current.rooms) addRoom(state, { persist: false });
@@ -1141,6 +1144,10 @@ function loadWorkspaceRuntime(current) {
     if (room) openRoom(room, { persist: false });
   }
   applyLayout(current.focusedRid);
+  const chatTile = tiles.find((tile) => tile.el.classList.contains('focus-main')) ||
+    tiles.find((tile) => !tile.el.hidden) || tiles[0];
+  chatPanel.setPreferredRid(chatTile ? chatTile.s.rid : '');
+  syncChatRooms();
   syncEcoButton();
   syncBatchRates();
   rooms.forEach((room) => {
