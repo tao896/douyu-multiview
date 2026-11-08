@@ -13,6 +13,12 @@ const FALLBACK_GIFT = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/s
 
 const tpl = document.getElementById('tileTpl');
 
+// 斗鱼取流接口 error=-5 表示主播未开播（见 douyu.js 的 ERRORS）。
+const STREAM_OFFLINE_CODE = -5;
+function isStreamOfflineError(error) {
+  return Number(error?.code) === STREAM_OFFLINE_CODE;
+}
+
 // 鼠标进入、移动或点击后显示工具栏，窗口内停止操作 1 秒隐藏，移出立即隐藏上下两条。
 // 每个窗口独立计时，按住指针或键盘操作控件期间会不断续期，因此不会中途消失。
 const CONTROLS_HIDE_DELAY = 1_000;
@@ -265,7 +271,15 @@ export class Tile {
 
   // —— 数据加载 ——
   async fetchUrl({ signal } = {}) {
-    const j = await fetchJson(`/api/stream?rid=${this.s.rid}&rate=${this.s.rate}`, { signal });
+    let j;
+    try {
+      j = await fetchJson(`/api/stream?rid=${this.s.rid}&rate=${this.s.rate}`, { signal });
+    } catch (e) {
+      // 下播后重连取流会得到 -5；按下播处理，否则只会无限重连且不会被自动隐藏。
+      // showOffline 会让播放器换代，这次加载随后的失败会被忽略。
+      if (isStreamOfflineError(e)) this.markStreamOffline();
+      throw e;
+    }
     // 每次取流都同步清晰度列表：斗鱼返回的 multirates 会变，首次可能为空
     this.fillRates(j.stream.rates, j.stream.rate);
     return j.stream.url;
@@ -301,6 +315,11 @@ export class Tile {
     } catch (e) {
       if (isAbortError(e)) return;
       if (this.destroyed || seq !== this.loadSeq) return;
+      // 房间接口仍报开播、取流却已返回未开播（刚下播时常见），同样按下播处理。
+      if (isStreamOfflineError(e)) {
+        this.markStreamOffline();
+        return;
+      }
       this.player.setExternalState('error', e.message || '加载失败');
       this.onInfo(this);
     } finally {
@@ -343,6 +362,12 @@ export class Tile {
     this.live = next;
     this.onInfo(this);
     return true;
+  }
+
+  markStreamOffline() {
+    if (this.destroyed) return;
+    this.setRoomLive(false);
+    this.showOffline(undefined, { cancelLoad: true });
   }
 
   showOffline(message = '主播未开播', { cancelLoad = false } = {}) {

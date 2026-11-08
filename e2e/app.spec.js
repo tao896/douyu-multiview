@@ -784,3 +784,24 @@ test('filters known SourceBuffer event diagnostics but preserves unrelated error
   });
   expect(errors).toEqual(['unrelated diagnostic']);
 });
+
+test('hides the tile when reconnect finds the stream offline (-5) while room info still says live', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+  await page.getByRole('button', { name: '添加' }).click();
+  const tile = page.locator('article.tile');
+  await expect(tile).toBeVisible();
+  await page.locator('#hideOfflineBtn').click();
+  await expect(tile).toBeVisible();
+
+  // 刚下播：房间接口仍报开播，取流接口已返回 -5。后注册的路由优先匹配。
+  await page.route('**/api/stream**', (route) => route.fulfill({
+    status: 502,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: '主播未开播', code: -5 }),
+  }));
+  await page.evaluate(() => window.__mpegtsPlayers[0].emit('error', 'NetworkError', 'UnrecoverableEarlyEof'));
+  await expect(tile).toBeHidden({ timeout: 8_000 });
+  await expect(page.locator('#emptyTitle')).toHaveText('未开播窗口已隐藏');
+});
