@@ -931,6 +931,13 @@ body.room-dragging { user-select: none; cursor: grabbing; }
 .icon:hover { background: #2a2e3e; color: var(--text); }
 .icon.danger:hover { background: rgba(229, 72, 77, .16); color: var(--danger); }
 .icon.on { color: var(--accent); }
+.icon.record.recording { color: var(--danger); }
+.icon.record.record-waiting { color: var(--danger); opacity: .6; }
+.icon.record.recording .tile-icon { animation: record-pulse 1.6s ease-in-out infinite; }
+@keyframes record-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .icon.record.recording .tile-icon { animation: none; }
+}
 
 /* ---------- 播放区 ---------- */
 .stage {

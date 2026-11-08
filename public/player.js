@@ -123,7 +123,8 @@ const CONFIG = {
 };
 
 export class Player {
-  constructor(video, { getUrl, onState, random = Math.random } = {}) {
+  constructor(video, { getUrl, onState, onStreamData, random = Math.random } = {}) {
+    this.onStreamData = onStreamData || null; // 录制旁路，收到加载器过滤后的 FLV 字节
     this.video = video;
     this.getUrl = getUrl;             // () => Promise<string>
     this.onState = onState || (() => {});
@@ -266,7 +267,12 @@ export class Player {
       // 每条连接单独统计加载器去掉的无声 AAC 帧。
       this.audioFilterStats = { dropped: 0 };
       this.silentAacReported = false;
-      const mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, { ...CONFIG, audioFilterStats: this.audioFilterStats });
+      // 只转发当前连接的数据，避免已替换的旧加载器尾包混进录制。
+      let mp = null;
+      const recordTap = (chunk, token) => {
+        if (mp && this.mp === mp) this.onStreamData?.(chunk, token);
+      };
+      mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, { ...CONFIG, audioFilterStats: this.audioFilterStats, recordTap });
       this.mp = mp;
       this.pendingAlignment = recovering;
       this.startFrameMonitor();

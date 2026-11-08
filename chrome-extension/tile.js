@@ -3,6 +3,7 @@ import { Player } from './player.js';
 import { DanmakuClient } from './danmaku-client.js';
 import { DanmakuRenderer } from './danmaku-render.js';
 import { DanmakuFilter } from './danmaku-filter.js';
+import { RoomRecorder } from './flv-recorder.js';
 import { fetchJson, isAbortError } from './net.js';
 
 import { resolveGift } from './gift-config.js';
@@ -40,6 +41,7 @@ export class Tile {
     onAggregate,
     onRanks,
     onGifts,
+    onRecord,
     danmakuConfig,
   }) {
     this.s = {
@@ -66,6 +68,12 @@ export class Tile {
     this.onAggregate = onAggregate || (() => {});
     this.onRanks = onRanks || (() => {});
     this.onGifts = onGifts || (() => {});
+    this.onRecord = onRecord || (() => {});
+    this.recorder = new RoomRecorder({
+      getName: () => ({ nickname: this.s.nickname, rid: this.s.rid }),
+      onEvent: (event) => this.onRecorderEvent(event),
+    });
+    this.recordTimer = 0;
     // 最近一次收到的榜单，切回聊天窗时先显示，等待下一次推送更新
     this.ranks = {};
     this.ranksWanted = false;
@@ -111,6 +119,7 @@ export class Tile {
       focus: q('[data-act="focus"]'),
       pip: q('[data-act="pip"]'),
       aggregate: q('[data-act="aggregate"]'),
+      record: q('[data-act="record"]'),
       gift: q('[data-act="gift"]'),
     };
     this.updateTitleLink(this.s.title || '加载中…');
@@ -134,6 +143,7 @@ export class Tile {
     this.player = new Player(this.$.video, {
       getUrl: ({ signal } = {}) => this.fetchUrl({ signal }),
       onState: (e) => this.onPlayerState(e),
+      onStreamData: (chunk, token) => this.onStreamData(chunk, token),
     });
 
     this.bindEvents();
@@ -169,6 +179,7 @@ export class Tile {
         danmaku: () => this.setDanmaku(!this.s.danmaku),
         solo: () => this.onSolo(this),
         aggregate: () => this.onAggregate(this),
+        record: () => this.toggleRecord(),
         gift: () => this.setGiftsEnabled(!this.giftsEnabled),
         focus: () => this.onFocus(this),
         pip: () => this.togglePictureInPicture(),
@@ -376,6 +387,7 @@ export class Tile {
       this.loadController?.abort();
     }
     this.player.stop('offline');
+    this.recorder.endSession();
     this.player.setExternalState('offline', message);
     this.setStatus('未开播', 'err');
     this.showOverlay(message || '主播未开播');
@@ -637,6 +649,51 @@ export class Tile {
     this.$.aggregate.setAttribute('aria-label', active ? '关闭弹幕聚合' : '开启弹幕聚合');
   }
 
+  // —— 单直播间录制 ——
+  // 开启后一直待录，直到手动停止：下播时结束当前文件，再开播自动新建文件。
+  onStreamData(chunk, token) {
+    this.recorder.push(chunk, token);
+  }
+
+  isRecording() {
+    return this.recorder.armed;
+  }
+
+  // 必须在点击事件里同步调用：选目录对话框需要用户手势。
+  toggleRecord() {
+    if (this.recorder.armed) this.recorder.disarm();
+    else if (this.recorder.unsupported) this.onRecord(this, { type: 'error', message: '当前流不是 FLV 格式，无法录制' });
+    else this.recorder.arm();
+  }
+
+  onRecorderEvent(event) {
+    if (event.type === 'armed') {
+      clearInterval(this.recordTimer);
+      this.recordTimer = setInterval(() => this.renderRecord(), 1000);
+    } else if (event.type === 'disarmed') {
+      clearInterval(this.recordTimer);
+      this.recordTimer = 0;
+    }
+    this.renderRecord();
+    if (this.destroyed && event.type !== 'saved' && event.type !== 'error') return;
+    this.onRecord(this, event);
+  }
+
+  renderRecord() {
+    const rec = this.recorder;
+    const writing = rec.armed && !!rec.sink;
+    const btn = this.$.record;
+    btn.classList.toggle('recording', writing);
+    btn.classList.toggle('record-waiting', rec.armed && !writing);
+    btn.setAttribute('aria-pressed', String(rec.armed));
+    const total = `${formatDuration(Date.now() - rec.startedAt)}，${formatBytes(rec.bytes)}，${rec.files} 个文件`;
+    const label = !rec.armed ? '录制此直播间'
+      : writing ? `录制中，点击停止（已开启 ${total}）`
+        : `等待开播后自动录制，点击停止${rec.files ? `（已开启 ${total}）` : ''}`;
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+  }
+
   onPlayerState({ state, message }) {
     if (state === 'progress') {
       // 画面在推进就不该有任何遮罩。高频事件，只在遮罩真开着时才动 DOM
@@ -862,9 +919,24 @@ export class Tile {
     this.controlsAbort = null;
     this.visibilityObserver?.disconnect();
     if (this.isPictureInPicture()) document.exitPictureInPicture?.().catch(() => {});
+    // 关窗时保存已录内容，不能丢弃。
+    this.recorder.disarm();
+    clearInterval(this.recordTimer);
     this.player.destroy();
     this.renderer.destroy();
     this.dm?.close();
     this.el.remove();
   }
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(2)} GB`;
+  if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function formatDuration(ms) {
+  const total = Math.floor(ms / 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
 }

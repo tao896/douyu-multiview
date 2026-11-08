@@ -786,6 +786,12 @@ function openRoom(room, { persist = true } = {}) {
     onGifts: (item) => {
       if (String(item.s.rid) === chatPanel.rid) syncChatTools();
     },
+    onRecord: (item, event) => {
+      const message = recordToast(item, event);
+      if (message) toast(message, event.type === 'error' ? 5000 : 3600, event.type === 'error');
+      // 录制中（含等待开播）的窗口不能被节能暂停，否则会断录或错过开播。
+      if (event.type === 'armed' || event.type === 'disarmed') scheduleEco(item);
+    },
     danmakuConfig: activeWorkspace().danmaku,
   });
   tiles.push(tile);
@@ -1414,13 +1420,40 @@ function syncEcoButton() {
   tiles.forEach(scheduleEco);
 }
 
+function recordToast(tile, event) {
+  const name = tile.s.nickname || tile.s.rid;
+  const size = (bytes) => bytes >= 1 << 30 ? `${(bytes / (1 << 30)).toFixed(2)} GB` : `${(bytes / (1 << 20)).toFixed(1)} MB`;
+  switch (event.type) {
+    case 'armed':
+      if (!event.dir) return `${name}：开始录制，浏览器不支持选择目录，每段录完后自动下载`;
+      return `${name}：开始录制到「${event.dir}」，每 30 分钟一个文件；下播后会在开播时自动续录`;
+    case 'saved':
+      // 分段换文件很频繁，不打扰；下播和手动停止时告知。
+      if (event.reason === 'split') return '';
+      return event.reason === 'offline'
+        ? `${name} 已下播，录制文件已保存（${size(event.bytes)}），开播后自动继续录制`
+        : `${name}：录制已停止，已保存 ${event.fileName}（${size(event.bytes)}）`;
+    case 'error':
+      return event.message;
+    default:
+      return '';
+  }
+}
+
+// 写盘录制必须正常停止才会落成文件；录制中离开页面先提醒。
+window.addEventListener('beforeunload', (event) => {
+  if (!tiles.some((tile) => tile.isRecording())) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
 function scheduleEco(tile) {
   if (!tile || !tiles.includes(tile)) return;
   clearTimeout(ecoTimers.get(tile));
   ecoTimers.delete(tile);
   // 后台维持现有连接，节能仅处理前台视口外的窗口。
   if (document.hidden) return;
-  const protectedTile = !tile.s.muted || tile === soloTile || tile.isPictureInPicture();
+  const protectedTile = !tile.s.muted || tile === soloTile || tile.isPictureInPicture() || tile.isRecording();
   const shouldSuspend = ecoModeEnabled() && !protectedTile && (!document.hidden && !tile.visible);
   if (!shouldSuspend) {
     tile.resumeFromEco();
@@ -1429,7 +1462,7 @@ function scheduleEco(tile) {
   if (tile.ecoSuspended) return;
   const timer = setTimeout(() => {
     ecoTimers.delete(tile);
-    const stillProtected = !tile.s.muted || tile === soloTile || tile.isPictureInPicture();
+    const stillProtected = !tile.s.muted || tile === soloTile || tile.isPictureInPicture() || tile.isRecording();
     if (ecoModeEnabled() && !stillProtected && (!document.hidden && !tile.visible)) tile.suspendForEco();
   }, 30_000);
   ecoTimers.set(tile, timer);

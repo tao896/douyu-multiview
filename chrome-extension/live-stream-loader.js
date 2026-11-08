@@ -73,6 +73,10 @@ export class LiveStreamLoader {
         const kept = filter.push(value);
         if (this.config.audioFilterStats) this.config.audioFilterStats.dropped = filter.dropped;
         if (!kept.length) continue;
+        // 录制旁路：在送入 mpegts 之前同步交出字节，filter 实例区分不同连接。
+        if (this.config.recordTap) {
+          try { this.config.recordTap(kept, filter); } catch {}
+        }
         const chunk = kept.byteOffset === 0 && kept.byteLength === kept.buffer.byteLength
           ? kept.buffer : kept.buffer.slice(kept.byteOffset, kept.byteOffset + kept.byteLength);
         const start = range.from + received;
