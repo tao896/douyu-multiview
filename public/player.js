@@ -123,8 +123,12 @@ const CONFIG = {
 };
 
 export class Player {
-  constructor(video, { getUrl, onState, onStreamData, random = Math.random } = {}) {
+  constructor(video, { getUrl, onState, onStreamData, isRecording, random = Math.random } = {}) {
     this.onStreamData = onStreamData || null; // 录制旁路，收到加载器过滤后的 FLV 字节
+    this.isRecording = isRecording || (() => false);
+    // 后台录制时 Chrome 暂停了静音视频：保持下载只写录制文件，不再送入 mpegts，
+    // 否则未播放的缓冲会无限增长。回到页面后重新连接恢复画面。
+    this.recordOnly = false;
     this.video = video;
     this.getUrl = getUrl;             // () => Promise<string>
     this.onState = onState || (() => {});
@@ -269,8 +273,11 @@ export class Player {
       this.silentAacReported = false;
       // 只转发当前连接的数据，避免已替换的旧加载器尾包混进录制。
       let mp = null;
+      // 返回 true 时加载器丢弃这块数据，不送入 mpegts（仅录制模式）。
       const recordTap = (chunk, token) => {
-        if (mp && this.mp === mp) this.onStreamData?.(chunk, token);
+        if (!mp || this.mp !== mp) return false;
+        this.onStreamData?.(chunk, token);
+        return this.recordOnly;
       };
       mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, { ...CONFIG, audioFilterStats: this.audioFilterStats, recordTap });
       this.mp = mp;
@@ -715,10 +722,16 @@ export class Player {
     this.lastMove = Date.now();
     this.watchdog = setInterval(() => {
       if (this.destroyed || !this.mp) return;
+      if (this.recordOnly) {
+        // 录制停止后不再需要后台下载，按原逻辑断开等页面回到前台。
+        if (!this.isRecording()) this.suspendUntilVisible();
+        return;
+      }
       // 页面在后台时 Chrome 会暂停静音视频，重连后的新流也会立刻被暂停。
-      // 此时断开下载、等页面回到前台再连，而不是每 30 秒重连一次。
+      // 此时断开下载、等页面回到前台再连，而不是每 30 秒重连一次；录制中则只保留下载。
       if (!this.pageVisible && this.video.paused && this.liveLatency() > MAX_FORWARD_BUFFER_SECONDS) {
-        this.suspendUntilVisible();
+        if (this.isRecording()) this.enterRecordOnly();
+        else this.suspendUntilVisible();
         return;
       }
       // 后向清理无法释放尚未播放的内容；后台、暂停及解码卡死也必须检查。
@@ -842,6 +855,12 @@ export class Player {
     this.pageVisible = true;
     this.pageHiddenAt = 0;
     this.resetFrameSamples();
+    // 仅录制期间 mpegts 缺了一段数据，必须换新连接；录制本身会在关键帧处无缝接上。
+    if (this.recordOnly) {
+      this.retry = 0;
+      this.load({ reason: 'page-visible' });
+      return;
+    }
     if (this.waitingForVisible) {
       this.waitingForVisible = false;
       this.retry = 0;
@@ -864,6 +883,11 @@ export class Player {
     this.lastTime = this.video.currentTime;
     this.lastMove = Date.now();
     this.startWatchdog();
+  }
+
+  enterRecordOnly() {
+    this.recordOnly = true;
+    this.recordSyncEvent('record-only', '页面在后台，暂停画面，继续录制');
   }
 
   suspendUntilVisible() {
@@ -928,6 +952,7 @@ export class Player {
   }
 
   teardown() {
+    this.recordOnly = false;
     this.stableSince = 0;
     this.frameEpoch++;
     if (this.frameCallback !== null) this.video.cancelVideoFrameCallback?.(this.frameCallback);

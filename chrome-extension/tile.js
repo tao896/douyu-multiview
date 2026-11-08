@@ -144,6 +144,7 @@ export class Tile {
       getUrl: ({ signal } = {}) => this.fetchUrl({ signal }),
       onState: (e) => this.onPlayerState(e),
       onStreamData: (chunk, token) => this.onStreamData(chunk, token),
+      isRecording: () => this.recorder.armed,
     });
 
     this.bindEvents();

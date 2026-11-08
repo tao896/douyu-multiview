@@ -74,8 +74,11 @@ export class LiveStreamLoader {
         if (this.config.audioFilterStats) this.config.audioFilterStats.dropped = filter.dropped;
         if (!kept.length) continue;
         // 录制旁路：在送入 mpegts 之前同步交出字节，filter 实例区分不同连接。
+        // 返回 true 表示仅录制（后台暂停画面），这块数据不再送入 mpegts。
         if (this.config.recordTap) {
-          try { this.config.recordTap(kept, filter); } catch {}
+          let recordOnly = false;
+          try { recordOnly = this.config.recordTap(kept, filter) === true; } catch {}
+          if (recordOnly) continue;
         }
         const chunk = kept.byteOffset === 0 && kept.byteLength === kept.buffer.byteLength
           ? kept.buffer : kept.buffer.slice(kept.byteOffset, kept.byteOffset + kept.byteLength);
