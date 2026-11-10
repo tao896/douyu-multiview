@@ -751,7 +751,7 @@ export class Tile {
     this.$.video.volume = this.s.volume / 100;
     this.$.vol.value = String(this.s.volume);
     this.$.volNum.textContent = this.s.muted ? '0' : String(this.s.volume);
-    this.$.mute.textContent = this.s.muted ? '🔇' : '🔊';
+    this.$.mute.querySelector('use')?.setAttribute('href', this.s.muted ? '#icon-volume-off' : '#icon-volume');
     this.$.mute.classList.toggle('on', !this.s.muted);
     this.$.mute.setAttribute('aria-pressed', String(!this.s.muted));
     this.el.classList.toggle('audio-active', audioActive);

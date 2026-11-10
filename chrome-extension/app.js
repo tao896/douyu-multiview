@@ -230,7 +230,7 @@ function isMobile() {
 function setSidebarCollapsed(collapsed, { persist = true } = {}) {
   workspaceEl.classList.toggle('sidebar-collapsed', !!collapsed);
   const btn = $('sidebarToggle');
-  btn.textContent = collapsed ? '›' : '‹';
+  btn.querySelector('use')?.setAttribute('href', collapsed ? '#icon-chevron-right' : '#icon-chevron-left');
   btn.title = collapsed ? '展开直播间列表' : '收起直播间列表';
   if (!isMobile()) btn.setAttribute('aria-expanded', String(!collapsed));
   if (persist) save();
@@ -1206,11 +1206,15 @@ $('addForm').addEventListener('submit', async (event) => {
   }
 });
 
-$('addInput').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    $('addForm').requestSubmit();
-  }
+// 单行输入框粘贴时浏览器会直接删掉换行，多行房间号会粘成一串；先把换行换成空格再插入。
+$('addInput').addEventListener('paste', (event) => {
+  const text = event.clipboardData?.getData('text');
+  if (!text || !/[\r\n]/.test(text)) return;
+  event.preventDefault();
+  const input = event.currentTarget;
+  const flat = text.replace(/[\r\n]+/g, ' ').trim();
+  input.setRangeText(flat, input.selectionStart, input.selectionEnd, 'end');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 });
 
 // 礼物记录全局开关（记录仍保留在窗口内存中）

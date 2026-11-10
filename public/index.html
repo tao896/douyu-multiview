@@ -98,6 +98,25 @@
     <path d="M15 5.3a3 3 0 0 1 0 5.4M17 14.3c2 .6 3.1 2.2 3.5 4.7"/>
   </symbol>
   <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></symbol>
+  <symbol id="icon-gift" viewBox="0 0 24 24">
+    <rect x="3.5" y="8" width="17" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12"/>
+    <path d="M12 8C10.5 4.5 7 4.5 7 6.5S10 8 12 8ZM12 8c1.5-3.5 5-3.5 5-1.5S14 8 12 8Z"/>
+  </symbol>
+  <symbol id="icon-settings" viewBox="0 0 24 24">
+    <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>
+  </symbol>
+  <symbol id="icon-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="icon-pip" viewBox="0 0 24 24">
+    <rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="6" height="5" rx="1"/>
+  </symbol>
+  <symbol id="icon-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/></symbol>
+  <symbol id="icon-fullscreen" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
+  <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5Z"/></symbol>
+  <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+  <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="icon-chevrons-left" viewBox="0 0 24 24"><path d="m12 6-6 6 6 6M18 6l-6 6 6 6"/></symbol>
+  <symbol id="icon-chevrons-right" viewBox="0 0 24 24"><path d="m6 6 6 6-6 6M12 6l6 6-6 6"/></symbol>
   <symbol id="icon-user" viewBox="0 0 24 24">
     <circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-4 3.3-6 7.5-6s6.7 2 7.5 6"/>
   </symbol>
@@ -109,9 +128,9 @@
   <h1 class="logo">斗鱼同屏</h1>
 
   <form class="add" id="addForm">
-    <textarea id="addInput" rows="1" autocomplete="off" spellcheck="false"
-              aria-label="添加直播间"
-              placeholder="输入房间号或地址；可粘贴多项"></textarea>
+    <input id="addInput" type="text" autocomplete="off" spellcheck="false"
+           aria-label="添加直播间"
+           placeholder="输入房间号或地址；可粘贴多项">
     <button type="submit" id="addBtn">添加</button>
   </form>
 
@@ -211,13 +230,13 @@
       <svg class="toolbar-icon toolbar-icon-state-on" aria-hidden="true"><use href="#icon-danmaku"/></svg>
     </button>
     <button class="ghost toolbar-icon-btn" id="giftAllBtn" type="button" aria-pressed="true"
-            aria-label="礼物记录全关" data-tooltip="礼物记录全关">🎁</button>
+            aria-label="礼物记录全关" data-tooltip="礼物记录全关"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-gift"/></svg></button>
     <button class="ghost toolbar-icon-btn" id="giftFilterBtn" type="button" aria-label="过滤礼物" data-tooltip="过滤礼物"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-filter"/></svg></button>
     <button class="ghost toolbar-icon-btn on" id="roomStatsBtn" type="button" aria-pressed="true"
             aria-label="隐藏统计水印" data-tooltip="隐藏统计水印">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-data"/></svg>
     </button>
-    <button class="ghost toolbar-icon-btn" id="danmakuSettingsBtn" type="button" aria-label="弹幕规则" data-tooltip="弹幕屏蔽与去重">⚙</button>
+    <button class="ghost toolbar-icon-btn" id="danmakuSettingsBtn" type="button" aria-label="弹幕规则" data-tooltip="弹幕屏蔽与去重"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-settings"/></svg></button>
     <button class="ghost toolbar-icon-btn" id="reloadAllBtn" type="button"
             aria-label="刷新" data-tooltip="重载全部直播窗口">
       <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-reload"/></svg>
@@ -267,9 +286,9 @@
       </div>
       <div class="sidebar-head-actions">
         <button class="sidebar-toggle sidebar-hide" id="sidebarHideBtn" type="button"
-                aria-controls="roomSidebar" title="完全隐藏直播间列表" aria-label="完全隐藏直播间列表">«</button>
+                aria-controls="roomSidebar" title="完全隐藏直播间列表" aria-label="完全隐藏直播间列表"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevrons-left"/></svg></button>
         <button class="sidebar-toggle" id="sidebarToggle" type="button"
-                aria-controls="roomSidebar" aria-expanded="true" title="收起直播间列表">‹</button>
+                aria-controls="roomSidebar" aria-expanded="true" title="收起直播间列表"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevron-left"/></svg></button>
       </div>
     </div>
 
@@ -308,7 +327,7 @@
   </aside>
 
   <button class="sidebar-reveal" id="sidebarRevealBtn" type="button"
-          aria-controls="roomSidebar" title="显示直播间列表" aria-label="显示直播间列表">›</button>
+          aria-controls="roomSidebar" title="显示直播间列表" aria-label="显示直播间列表"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg></button>
 
   <div class="content">
     <main id="grid" class="grid" data-cols="auto"></main>
@@ -332,7 +351,7 @@
         <svg class="toolbar-icon" aria-hidden="true"><use href="#icon-float"/></svg>
       </button>
       <button class="sidebar-toggle" id="chatHideBtn" type="button"
-              aria-controls="chatPanel" title="隐藏聊天窗（C）" aria-label="隐藏聊天窗">»</button>
+              aria-controls="chatPanel" title="隐藏聊天窗（C）" aria-label="隐藏聊天窗"><svg class="toolbar-icon" aria-hidden="true"><use href="#icon-chevrons-right"/></svg></button>
     </div>
     <section class="chat-ranks" id="chatRanks" aria-label="今日统计与榜单">
       <div class="chat-stats" data-chat-stats aria-live="off"></div>
@@ -378,17 +397,17 @@
       </div>
       <span class="badge" data-status aria-live="polite">连接中</span>
       <div class="head-actions">
-        <button class="icon" data-act="focus" title="设为焦点画面" aria-label="设为焦点画面">◎</button>
+        <button class="icon" data-act="focus" title="设为焦点画面" aria-label="设为焦点画面"><svg class="tile-icon" aria-hidden="true"><use href="#icon-target"/></svg></button>
         <button class="icon" data-act="aggregate" title="开启弹幕聚合" aria-label="开启弹幕聚合" aria-pressed="false">
           <svg class="tile-icon" aria-hidden="true"><use href="#icon-danmaku-aggregate"/></svg>
         </button>
         <button class="icon record" data-act="record" title="录制此直播间" aria-label="录制此直播间" aria-pressed="false">
           <svg class="tile-icon" aria-hidden="true"><use href="#icon-record"/></svg>
         </button>
-        <button class="icon" data-act="pip" title="画中画" aria-label="进入画中画" hidden>▣</button>
-        <button class="icon" data-act="expand" title="放大 / 还原">⤢</button>
-        <button class="icon" data-act="reload" title="重新加载">↻</button>
-        <button class="icon danger" data-act="remove" title="关闭窗口" aria-label="关闭窗口">✕</button>
+        <button class="icon" data-act="pip" title="画中画" aria-label="进入画中画" hidden><svg class="tile-icon" aria-hidden="true"><use href="#icon-pip"/></svg></button>
+        <button class="icon" data-act="expand" title="放大 / 还原" aria-label="放大 / 还原"><svg class="tile-icon" aria-hidden="true"><use href="#icon-expand"/></svg></button>
+        <button class="icon" data-act="reload" title="重新加载" aria-label="重新加载"><svg class="tile-icon" aria-hidden="true"><use href="#icon-reload"/></svg></button>
+        <button class="icon danger" data-act="remove" title="关闭窗口" aria-label="关闭窗口"><svg class="tile-icon" aria-hidden="true"><use href="#icon-close"/></svg></button>
       </div>
     </div>
 
@@ -403,12 +422,12 @@
       <div class="overlay" data-overlay hidden>
         <div class="overlay-msg" data-overlay-msg role="status" aria-live="polite"></div>
         <button class="retry" data-act="reload" data-retry-btn>重试</button>
-        <button class="retry" data-act="play" data-play-btn hidden>▶ 点击播放</button>
+        <button class="retry" data-act="play" data-play-btn hidden><svg class="tile-icon" aria-hidden="true"><use href="#icon-play"/></svg>点击播放</button>
       </div>
     </div>
 
     <div class="tile-foot">
-      <button class="icon" data-act="mute" title="静音 / 取消静音" aria-label="静音 / 取消静音">🔇</button>
+      <button class="icon" data-act="mute" title="静音 / 取消静音" aria-label="静音 / 取消静音"><svg class="tile-icon" aria-hidden="true"><use href="#icon-volume-off"/></svg></button>
       <input class="vol" type="range" min="0" max="100" step="1" data-volume title="音量">
       <span class="vol-num" data-volnum>0</span>
 
@@ -418,7 +437,7 @@
 
       <button class="chip solo" data-act="solo" title="只听这个直播间" aria-label="独听">独听</button>
       <select class="rate" data-rate title="清晰度"></select>
-      <button class="icon" data-act="fullscreen" title="全屏">⛶</button>
+      <button class="icon" data-act="fullscreen" title="全屏" aria-label="全屏"><svg class="tile-icon" aria-hidden="true"><use href="#icon-fullscreen"/></svg></button>
     </div>
   </article>
 </template>
@@ -457,7 +476,7 @@
       <button class="room-notify" type="button" data-side-notify title="开播提醒" aria-label="开播提醒" aria-pressed="false">
         <svg class="room-icon" aria-hidden="true"><use href="#icon-bell"/></svg>
       </button>
-      <button class="room-delete" type="button" data-side-delete title="从列表删除" aria-label="从列表删除">✕</button>
+      <button class="room-delete" type="button" data-side-delete title="从列表删除" aria-label="从列表删除"><svg class="room-icon" aria-hidden="true"><use href="#icon-close"/></svg></button>
     </div>
   </div>
 </template>
