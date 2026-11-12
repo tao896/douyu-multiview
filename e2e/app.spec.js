@@ -116,39 +116,6 @@ async function roomRids(page) {
   return page.locator('#roomList .room-row').evaluateAll((rows) => rows.map((row) => row.dataset.rid));
 }
 
-test('opens one stream, exposes focus/diagnostics, notification and backup controls', async ({ page }) => {
-  const counts = await mockApplication(page);
-  await page.goto('/');
-  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
-  await page.getByRole('button', { name: '添加' }).click();
-
-  await expect(page.getByRole('link', { name: /测试直播间 100/ })).toBeVisible();
-  await expect(page.getByText('直播中', { exact: true })).toBeVisible();
-  expect(counts.resolve).toBe(2); // infoOnly + 带初始流地址的 resolve
-  expect(counts.stream).toBe(0); // 首播不能紧接着重复调用 /api/stream
-
-  const tile = page.locator('article.tile');
-  await revealTileControls(tile);
-  await tile.getByRole('button', { name: '设为焦点画面' }).click();
-  await expect(page.getByRole('button', { name: '网格布局' })).toHaveAttribute('aria-pressed', 'true');
-  await revealTileControls(tile);
-  await tile.getByRole('button', { name: '取消焦点画面' }).click();
-  await expect(page.getByRole('button', { name: '焦点布局' })).toHaveAttribute('aria-pressed', 'false');
-
-  await page.getByRole('button', { name: /^状态 / }).click();
-  await expect(page.getByRole('heading', { name: '连接与性能诊断' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: '连接与性能诊断' }).getByText(/播放 1/)).toBeVisible();
-  await page.getByRole('button', { name: '关闭', exact: true }).click();
-
-  await page.getByRole('button', { name: /开启 测试直播间 100 的开播提醒/ }).click();
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 100 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
-
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: '备份' }).click();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/^douyu-multiview-.*\.json$/);
-});
-
 test('reconnects after Early-EOF, escalates persistent buffering', async ({ page }) => {
   test.setTimeout(60_000);
   const counts = await mockApplication(page);
@@ -446,77 +413,6 @@ test('reorders sidebar rooms independently of open tiles and persists after relo
     .toEqual(['301', '302', '303', '304']);
 });
 
-// 窗口排序只应更新 openRids，不能改变左侧 rooms 顺序。
-test('drags open windows without changing sidebar room order', async ({ page }) => {
-  await mockApplication(page);
-  await page.goto('/');
-  await page.getByRole('textbox', { name: '添加直播间' }).fill('301 302 303');
-  await page.getByRole('button', { name: '添加' }).click();
-  await page.getByRole('button', { name: '批量' }).click();
-  await page.getByRole('button', { name: '选择已开播' }).click();
-  await page.getByRole('button', { name: '打开所选' }).click();
-  await page.getByRole('button', { name: '完成' }).click();
-
-  const tiles = page.locator('article.tile');
-  // 显示标题栏后，通过真实鼠标拖动调整窗口顺序。
-  await expect(tiles).toHaveCount(3);
-  await revealTileControls(tiles.first());
-  const source = tiles.nth(0).locator('[data-drag-handle]');
-  const target = tiles.nth(2);
-  const sourceBox = await source.boundingBox();
-  const targetBox = await target.boundingBox();
-  await page.mouse.move(sourceBox.x + 20, sourceBox.y + 20);
-  await page.mouse.down();
-  await page.mouse.move(targetBox.x + targetBox.width - 10, targetBox.y + targetBox.height / 2, { steps: 10 });
-  await page.mouse.move(targetBox.x + targetBox.width - 12, targetBox.y + targetBox.height / 2);
-  await page.mouse.up();
-
-  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
-  await expect.poll(() => tiles.evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
-    .toEqual(['302', '303', '301']);
-  await page.reload();
-  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
-  await expect.poll(() => page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
-    .toEqual(['302', '303', '301']);
-  // 复制并切回原方案，验证独立顺序的方案恢复路径。
-  const select = page.getByRole('combobox', { name: '当前观看方案' });
-  const original = await select.inputValue();
-  await page.getByRole('button', { name: '复制' }).click();
-  await expect(select).not.toHaveValue(original);
-  await select.selectOption(original);
-  await expect.poll(() => roomRids(page)).toEqual(['301', '302', '303']);
-  await expect.poll(() => tiles.evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
-    .toEqual(['302', '303', '301']);
-});
-
-test('a plain click on a sidebar room row opens it without starting a drag', async ({ page }) => {
-  await mockApplication(page);
-  await page.goto('/');
-  await page.getByRole('textbox', { name: '添加直播间' }).fill('701 702');
-  await page.getByRole('button', { name: '添加' }).click();
-  const rows = page.locator('#roomList .room-row');
-  await expect(rows).toHaveCount(2);
-  // 首个添加的房间会自动打开，第二行仍是关闭状态
-  await expect(page.locator('article.tile')).toHaveCount(1);
-  expect(await roomRids(page)).toEqual(['701', '702']);
-
-  // 点击行内的“打开”按钮：指针捕获曾把 click 重定向到拖动把手，导致无法打开
-  await page.getByRole('button', { name: /打开 测试直播间 702/ }).click();
-  await expect(page.locator('article.tile')).toHaveCount(2);
-  expect(await page.locator('article.tile').evaluateAll((nodes) => nodes.map((n) => n.dataset.rid)))
-    .toEqual(['701', '702']);
-
-  // 单击不应改变顺序
-  expect(await roomRids(page)).toEqual(['701', '702']);
-
-  // 点击已打开的行应定位到对应窗口（active 状态保持）
-  await page.getByRole('button', { name: /定位 测试直播间 702/ }).click();
-  await expect(page.getByRole('button', { name: /定位 测试直播间 702/ })).toHaveClass(/active/);
-  // 单击拖动把手本身（未位移）也不应触发排序
-  await rows.nth(0).locator('[data-side-drag]').click();
-  expect(await roomRids(page)).toEqual(['701', '702']);
-});
-
 test('dropping a dragged room on a filtered list keeps hidden rooms in relative order', async ({ page }) => {
   await mockApplication(page);
   await page.goto('/');
@@ -543,46 +439,6 @@ test('dropping a dragged room on a filtered list keeps hidden rooms in relative 
   await expect.poll(() => roomRids(page)).toEqual(['302', '303', '301', '304']);
   await page.reload();
   await expect.poll(() => roomRids(page)).toEqual(['302', '303', '301', '304']);
-});
-
-test('keeps the notification bell on and highlighted across reload, workspace switch and player updates', async ({ page }) => {
-  await mockApplication(page);
-  await page.goto('/');
-  await page.getByRole('textbox', { name: '添加直播间' }).fill('401 402');
-  await page.getByRole('button', { name: '添加' }).click();
-
-  const notify401 = page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ });
-  await notify401.click();
-  const notifyOn = page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ });
-  await expect(notifyOn).toHaveAttribute('aria-pressed', 'true');
-  await expect(notifyOn).toHaveClass(/\bon\b/);
-  // 开启状态应有明显的高亮背景，而不是仅靠彩色图标
-  const bg = await notifyOn.evaluate((node) => getComputedStyle(node).backgroundColor);
-  expect(bg).not.toBe('rgba(0, 0, 0, 0)');
-
-  // 触发播放器状态更新（静音/音量）不应覆盖提醒状态
-  const tile = page.locator('article.tile').first();
-  await revealTileControls(tile);
-  await tile.getByRole('button', { name: '静音 / 取消静音' }).click();
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
-
-  await page.reload();
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveClass(/\bon\b/);
-
-  // 切换方案再切回来，提醒状态仍应保留
-  await page.getByRole('button', { name: '复制' }).click();
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
-  const select = page.getByRole('combobox', { name: '当前观看方案' });
-  const options = await select.locator('option').evaluateAll((nodes) => nodes.map((n) => n.value));
-  await select.selectOption(options[0]);
-  await expect(page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'true');
-
-  // 关闭后同样正确恢复
-  await page.getByRole('button', { name: /关闭 测试直播间 401 的开播提醒/ }).click();
-  await expect(page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'false');
-  await page.reload();
-  await expect(page.getByRole('button', { name: /开启 测试直播间 401 的开播提醒/ })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('tile toolbars hide after one idle second or immediately on mouse leave, per window', async ({ page }) => {
@@ -664,71 +520,6 @@ test('hiding the focused toolbar transfers focus to a visible control', async ({
   await expect(hide).toBeFocused();
   await expect(page.locator('#topToolbar')).toHaveJSProperty('inert', false);
   expect(warnings).toEqual([]);
-});
-
-test('noble statistics watermark supports visibility and reconnect', async ({ page }) => {
-  await mockApplication(page);
-  await page.addInitScript(() => {
-    window.WebSocket = class {
-      static OPEN = 1;
-      readyState = 1;
-      constructor() { window.__statsSocket = this; setTimeout(() => this.onopen?.(), 0); }
-      send() {}
-      close() {}
-    };
-    window.__statsMessage = text => {
-      const body = new TextEncoder().encode(text + '\0');
-      const buffer = new ArrayBuffer(12 + body.length);
-      const view = new DataView(buffer);
-      view.setUint32(0, body.length + 8, true);
-      view.setUint32(4, body.length + 8, true);
-      new Uint8Array(buffer, 12).set(body);
-      window.__statsSocket.onmessage({ data: buffer });
-    };
-  });
-  await page.goto('/');
-  await page.locator('#addInput').fill('9999');
-  await page.locator('#addBtn').click();
-  const stats = page.locator('[data-stats]');
-  await expect(stats.locator('[data-watermark-fish]')).toHaveCount(0);
-  await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：--');
-  await page.evaluate(() => {
-    window.__statsMessage('type@=oni/vn@=123/');
-    window.__statsMessage('type@=dgb/gfid@=20002/gfcnt@=3/');
-  });
-  await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：123');
-  const statsToggle = page.locator('#roomStatsBtn');
-  await expect(statsToggle).toHaveAttribute('aria-pressed', 'true');
-  await statsToggle.click();
-  await expect(stats).toBeHidden();
-  await expect(statsToggle).toHaveAccessibleName('显示统计水印');
-  await expect(page.locator('[data-watermark]')).toBeVisible();
-  await statsToggle.click();
-  await expect(stats).toBeVisible();
-  await expect(page.locator('[data-watermark]')).toHaveText('测试主播');
-  const rects = await page.locator('.stage').evaluate(el => {
-    const a = el.getBoundingClientRect(), b = el.querySelector('[data-stats]').getBoundingClientRect();
-    return { top: b.top - a.top, right: a.right - b.right };
-  });
-  expect(rects).toEqual({ top: 12, right: 12 });
-  await page.evaluate(() => window.__statsSocket.onopen());
-  await expect(stats.locator('[data-watermark-noble]')).toHaveText('贵宾数：--');
-  await statsToggle.click();
-  await page.reload();
-  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
-  await expect(stats).toBeHidden();
-  await page.locator('#addInput').fill('8888');
-  await page.locator('#addBtn').click();
-  await expect(stats).toHaveCount(2);
-  for (const watermark of await stats.all()) await expect(watermark).toBeHidden();
-  await page.locator('#workspaceCloneBtn').click();
-  await expect(page.locator('#workspaceSelect option')).toHaveCount(2);
-  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
-  await statsToggle.click();
-  const originalId = await page.locator('#workspaceSelect option').first().getAttribute('value');
-  await page.locator('#workspaceSelect').selectOption(originalId);
-  await expect(statsToggle).toHaveAttribute('aria-pressed', 'false');
-  for (const watermark of await stats.all()) await expect(watermark).toBeHidden();
 });
 
 

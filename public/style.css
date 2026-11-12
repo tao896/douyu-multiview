@@ -238,12 +238,15 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
 .toolbar-tooltip {
   position: fixed;
   z-index: 100;
+  /* 短文案按内容宽度单行显示，长文案在 max-width 内换行，不会撑出边框 */
+  width: max-content;
   max-width: min(260px, calc(100vw - 16px));
   padding: 6px 9px;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   background: var(--panel-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
