@@ -92,6 +92,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
       : 1,
     ecoMode: !!raw.ecoMode,
     latencyChase: !!raw.latencyChase,
+    preferHevc: !!raw.preferHevc,
     rooms,
     openRids,
     danmaku: normalizeDanmakuConfig(raw.danmaku),

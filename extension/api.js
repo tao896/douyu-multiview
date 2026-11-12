@@ -22,6 +22,11 @@ function parseRate(value) {
   return rate;
 }
 
+// hevc=1：页面确认浏览器能解 H.265 后才会请求；房间没有 H.265 流时仍返回 H.264。
+function wantsHevc(url) {
+  return url.searchParams.get('hevc') === '1';
+}
+
 export async function handleApiPath(path) {
   const url = new URL(String(path || ''), 'https://extension.invalid');
   if (!url.pathname.startsWith('/api/')) {
@@ -38,13 +43,13 @@ export async function handleApiPath(path) {
     const info = await getRoomInfo(rid);
     if (url.searchParams.get('infoOnly') === '1') return info;
     if (!info.live) return { ...info, stream: null, reason: '主播未开播' };
-    return { ...info, stream: await getStream(info.rid, rate) };
+    return { ...info, stream: await getStream(info.rid, rate, { hevc: wantsHevc(url) }) };
   }
 
   if (url.pathname === '/api/stream') {
     const rid = parseRid(url.searchParams.get('rid'));
     const rate = parseRate(url.searchParams.get('rate'));
-    return { rid, stream: await getStream(rid, rate) };
+    return { rid, stream: await getStream(rid, rate, { hevc: wantsHevc(url) }) };
   }
 
 

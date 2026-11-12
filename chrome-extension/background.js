@@ -1,5 +1,6 @@
 import { handleApiPath } from './api.js';
 import { DanmakuSender, LOGIN_COOKIE_NAMES, credentialsFromCookies } from './danmaku-sender.js';
+import { FollowListError, fetchFollowList } from './follow-list.js';
 
 const danmakuSender = new DanmakuSender();
 
@@ -115,6 +116,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then((credentials) => danmakuSender.send(message.rid, message.text, credentials))
       .then((result) => sendResponse({ ok: true, confirmed: !!result?.confirmed }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || '弹幕发送失败', relogin: !!error?.relogin }));
+    return true;
+  }
+  // 关注列表：先确认浏览器里登录了斗鱼，未登录时不必请求接口
+  if (message?.type === 'douyu-follow-list') {
+    readCredentials()
+      .then((credentials) => {
+        if (!credentials) throw new FollowListError('请先在浏览器中登录斗鱼', { relogin: true });
+        return fetchFollowList();
+      })
+      .then((rooms) => sendResponse({ ok: true, rooms }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || '获取关注列表失败', relogin: !!error?.relogin }));
     return true;
   }
   if (message?.type === 'douyu-sync-reminders') { syncReminders(message.rooms); return; }

@@ -122,8 +122,21 @@ const CONFIG = {
   autoCleanupMinBackwardDuration: 15,
 };
 
+// 斗鱼的 H.265 流是 FLV codecId 12，由 mpegts.js 转成 hvc1 交给 MSE；Chrome 只在有硬件解码时支持。
+const HEVC_MSE_TYPE = 'video/mp4; codecs="hvc1.1.6.L120.90"';
+
+export function hevcPlaybackSupported() {
+  try {
+    return !!globalThis.MediaSource?.isTypeSupported?.(HEVC_MSE_TYPE);
+  } catch {
+    return false;
+  }
+}
+
 export class Player {
-  constructor(video, { getUrl, onState, onStreamData, isRecording, random = Math.random } = {}) {
+  // onMediaFailure(reason)：浏览器无法解码当前流（video.error 或 MSE 错误）时调用，窗口可据此换编码重连。
+  constructor(video, { getUrl, onState, onStreamData, isRecording, onMediaFailure, random = Math.random } = {}) {
+    this.onMediaFailure = onMediaFailure || (() => {});
     this.onStreamData = onStreamData || null; // 录制旁路，收到加载器过滤后的 FLV 字节
     this.isRecording = isRecording || (() => false);
     // 后台录制时 Chrome 暂停了静音视频：保持下载只写录制文件，不再送入 mpegts，
@@ -143,6 +156,7 @@ export class Player {
     video.addEventListener('playing', this.onPlaying);
     this.onMediaError = () => {
       if (!this.mp || this.destroyed || !video.error) return;
+      this.onMediaFailure(`media-error-${video.error.code}`);
       this.fail(`媒体播放失败 (${video.error.code})${video.error.message ? ': ' + video.error.message : ''}`, { force: true });
     };
     video.addEventListener('error', this.onMediaError);
@@ -298,6 +312,7 @@ export class Player {
         const httpFailure = detail === 'HttpStatusCodeInvalid';
         const status = httpFailure && info?.code ? ` (HTTP ${info.code})` : '';
         this.recordSyncEvent('mpegts-error', `${type}${detail ? ': ' + detail : ''}${status}`);
+        if (detail === 'MediaMSEError') this.onMediaFailure(detail);
         this.fail(`${type}${detail ? ': ' + detail : ''}${status}`, {
             force: httpFailure || detail === 'MediaMSEError' || detail === 'Exception' || isEarlyEofError(type, detail),
         });

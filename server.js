@@ -80,6 +80,11 @@ function parseRate(value) {
   return rate;
 }
 
+// hevc=1：页面确认浏览器能解 H.265 后才会请求；房间没有 H.265 流时仍返回 H.264。
+function wantsHevc(url) {
+  return url.searchParams.get('hevc') === '1';
+}
+
 async function handleApi(req, res, url) {
   const head = req.method === 'HEAD';
   if (url.pathname === '/api/search') return sendJson(res, 200, await searchRooms(url.searchParams.get('keyword')), head);
@@ -94,7 +99,7 @@ async function handleApi(req, res, url) {
     if (!info.live) {
       return sendJson(res, 200, { ...info, stream: null, reason: '主播未开播' }, head);
     }
-    const stream = await getStream(info.rid, rate);
+    const stream = await getStream(info.rid, rate, { hevc: wantsHevc(url) });
     return sendJson(res, 200, { ...info, stream }, head);
   }
 
@@ -102,7 +107,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/stream') {
     const rid = parseRid(url.searchParams.get('rid'));
     const rate = parseRate(url.searchParams.get('rate'));
-    return sendJson(res, 200, { rid, stream: await getStream(rid, rate) }, head);
+    return sendJson(res, 200, { rid, stream: await getStream(rid, rate, { hevc: wantsHevc(url) }) }, head);
   }
 
   if (url.pathname === '/api/room') {

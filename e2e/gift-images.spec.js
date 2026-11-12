@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-for (const source of ['public', 'chrome-extension', 'dist/chrome-extension']) {
+// chrome-extension/ 就是构建产物，与源码一致由 test/extension-build.test.js 保证
+for (const source of ['public', 'chrome-extension']) {
   test(`${source}: missing and failed gift images remain valid after redraw`, async ({ page }) => {
     // Serve each shipped module tree, without starting players or live connections.
     const { readFile } = await import('node:fs/promises');
@@ -32,7 +33,8 @@ for (const source of ['public', 'chrome-extension', 'dist/chrome-extension']) {
   });
 }
 
-for (const source of ['public', 'chrome-extension', 'dist/chrome-extension']) {
+// chrome-extension/ 就是构建产物，与源码一致由 test/extension-build.test.js 保证
+for (const source of ['public', 'chrome-extension']) {
   test(`${source}: gift updates preserve attached rows and animations`, async ({ page }) => {
     const { readFile } = await import('node:fs/promises');
     await page.route('**/gift-stability/**', async (route) => {

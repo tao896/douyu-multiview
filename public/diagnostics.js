@@ -5,6 +5,12 @@ export const STATE_LABELS = {
   suspended: '已暂停', offline: '未开播', error: '出错',
 };
 
+// 当前流的视频编码；H.265 解码失败回落时一并注明
+export function codecLabel(item) {
+  const name = item.codec === 'hevc' ? 'H.265' : item.codec === 'avc' ? 'H.264' : '编码未知';
+  return item.hevcBlocked ? `${name}（H.265 解码失败，已改用 H.264）` : name;
+}
+
 export function diagnosticSummary(items) {
   const count = (states) => items.filter((item) => states.includes(item.state)).length;
   return {
@@ -22,7 +28,7 @@ export function diagnosticCells(item) {
     item.title,
     STATE_LABELS[item.state] || item.state,
     item.rateName || '未知清晰度',
-    item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知',
+    `${item.width && item.height ? `${item.width}×${item.height}` : '分辨率未知'} · ${codecLabel(item)}`,
     `缓冲 ${item.bufferSeconds.toFixed(1)}s · 丢帧 ${item.droppedFrames}/${item.totalFrames}`,
     `近期丢帧 ${(item.recentDroppedRatio * 100).toFixed(1)}% · 帧检测 ${item.frameMonitoring === 'unsupported' ? '不支持' : item.frameMonitoring === 'suspended' ? '采样暂停' : item.frameAnomaly ? '异常' : '正常'} · 自动恢复 ${item.recoveryCount} 次`,
     `音画同步 ${item.syncStatus === 'audio-leading' ? '声音领先' : item.syncStatus === 'video-leading' ? '画面领先' : item.syncStatus === 'normal' ? '正常' : '无法测量'}${item.syncOffsetSeconds == null ? '' : ` (${(item.syncOffsetSeconds * 1000).toFixed(0)}ms)`}${item.syncRebuildCount ? ` · 偏差重建 ${item.syncRebuildCount} 次` : ""}${item.renderLagSeconds == null ? "" : ` · 画面滞后 ${(item.renderLagSeconds * 1000).toFixed(0)}ms`}${item.reanchorCount ? ` · 重新锚定 ${item.reanchorCount} 次` : ""}${item.audioConfigChanges ? ` · 音频配置切换 ${item.audioConfigChanges} 次` : ""}${item.audioGapMs ? ` · 音频断档 ${Math.round(item.audioGapMs)}ms` : ""}`,
@@ -40,7 +46,7 @@ export function diagnosticsText(items) {
     `播放 ${summary.playing} / 总计 ${summary.total}，缓冲/重连 ${summary.pending}，未开播 ${summary.offline}，出错 ${summary.error}`,
     ...items.map((item) =>
       `[${item.rid}] ${item.title} | ${STATE_LABELS[item.state] || item.state} | ${item.rateName || '-'} | ` +
-      `${item.width || 0}x${item.height || 0} | buffer=${item.bufferSeconds.toFixed(1)}s | ` +
+      `${item.width || 0}x${item.height || 0} | codec=${item.codec || 'unknown'}${item.hevcBlocked ? ' (hevc-failed)' : ''} | buffer=${item.bufferSeconds.toFixed(1)}s | ` +
       `dropped=${item.droppedFrames}/${item.totalFrames} | recentDropped=${(item.recentDroppedRatio * 100).toFixed(1)}% | retry=${item.retry} | ` +
       `frameMonitoring=${item.frameMonitoring} | frameSkew=${item.frameSkewSeconds == null ? 'unknown' : item.frameSkewSeconds.toFixed(3)}s | frameAnomaly=${item.frameAnomaly} | recoveries=${item.recoveryCount} | recoveryReason=${item.lastRecoveryReason || '-'} | ` +
       `latencyChase=${item.latencyChase ? (item.chasing ? 'chasing' : 'on') : 'off'} | liveJumps=${item.liveJumpCount || 0} | visibilityRecoveries=${item.visibilityRecoveryCount} | visibilityRecoveryReason=${item.lastVisibilityRecoveryReason || '-'} | ` +

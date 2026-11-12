@@ -1,26 +1,39 @@
+// 顶层：观看方案、房间列表、批量管理、网格布局、全局控制与持久化。
+// 相对独立的界面拆在各自模块里，这里负责共享状态和把它们接起来。
 import { bindQuickSearch } from './quick-search.js';
 import { ChatPanel } from './chat-panel.js';
-// 顶层：观看方案、房间列表、批量管理、网格布局、全局控制与持久化
 import { Tile } from './tile.js';
+import { hevcPlaybackSupported } from './player.js';
 import { fetchJson, isAbortError } from './net.js';
 import { RoomStatusScheduler } from './room-scheduler.js';
 import { installRoomDrag } from './room-drag.js';
-import { diagnosticCells, diagnosticSummary, diagnosticsText } from './diagnostics.js';
+import { createRoomSidebar } from './room-sidebar.js';
+import { makeTileDraggable } from './tile-drag.js';
+import { diagnosticSummary } from './diagnostics.js';
+import { installDiagnosticsPanel } from './diagnostics-panel.js';
+import { installBackupUi } from './backup-ui.js';
+import { installFollowImport } from './follow-import.js';
+import { askWorkspaceName, confirmAction } from './dialogs.js';
+import { installCtrlLongPress, installShortcuts } from './shortcuts.js';
+import { toast } from './toast.js';
+import { installToolbarTooltips } from './toolbar-tooltip.js';
+import {
+  collectReminderRooms,
+  createReminderSync,
+  handleRoomLiveTransition as notifyLiveTransition,
+  requestNotificationPermission,
+} from './live-notify.js';
 import {
   STORAGE_KEY_V1,
   STORAGE_KEY_V2,
   STORAGE_KEY_V3,
   cloneWorkspace,
-  createBackup,
   createWorkspace,
-  dropPositionForPoint,
   mapWithConcurrency,
   normalizeAppState,
   normalizeGiftValueFilter,
   normalizeRoomState,
   parseBatchInput,
-  parseBackup,
-  prepareImportedWorkspaces,
   reorderRooms,
   roomMatches,
 } from './state.js';
@@ -32,60 +45,16 @@ const grid = $('grid');
 const workspaceEl = $('workspace');
 const roomList = $('roomList');
 const mobileMedia = matchMedia(MOBILE_QUERY);
-const toolbarTooltip = $('toolbarTooltip');
-let toolbarTooltipTarget = null;
+const toolbarTooltips = installToolbarTooltips($('toolbarTooltip'));
 
 function setToolbarButtonLabel(buttonOrId, label, tooltip = label) {
-  const button = typeof buttonOrId === 'string' ? $(buttonOrId) : buttonOrId;
-  button.setAttribute('aria-label', label);
-  button.dataset.tooltip = tooltip;
-  if (toolbarTooltipTarget === button && !toolbarTooltip.hidden) {
-    toolbarTooltip.textContent = tooltip;
-    positionToolbarTooltip(button);
-  }
+  toolbarTooltips.setLabel(typeof buttonOrId === 'string' ? $(buttonOrId) : buttonOrId, label, tooltip);
 }
-
-function positionToolbarTooltip(button) {
-  const gap = 8;
-  const edge = 8;
-  const buttonRect = button.getBoundingClientRect();
-  const tooltipRect = toolbarTooltip.getBoundingClientRect();
-  let top = buttonRect.bottom + gap;
-  if (top + tooltipRect.height > window.innerHeight - edge) top = buttonRect.top - tooltipRect.height - gap;
-  const centered = buttonRect.left + (buttonRect.width - tooltipRect.width) / 2;
-  const left = Math.min(Math.max(centered, edge), window.innerWidth - tooltipRect.width - edge);
-  toolbarTooltip.style.left = `${Math.round(left)}px`;
-  toolbarTooltip.style.top = `${Math.round(Math.max(edge, top))}px`;
-}
-
-function showToolbarTooltip(button) {
-  if (!button.dataset.tooltip) return;
-  toolbarTooltipTarget = button;
-  toolbarTooltip.textContent = button.dataset.tooltip;
-  toolbarTooltip.hidden = false;
-  positionToolbarTooltip(button);
-}
-
-function hideToolbarTooltip(button) {
-  if (button && toolbarTooltipTarget !== button) return;
-  toolbarTooltip.hidden = true;
-  toolbarTooltipTarget = null;
-}
-
-document.querySelectorAll('.toolbar-icon-btn').forEach((button) => {
-  button.addEventListener('mouseenter', () => showToolbarTooltip(button));
-  button.addEventListener('mouseleave', () => hideToolbarTooltip(button));
-  button.addEventListener('focus', () => showToolbarTooltip(button));
-  button.addEventListener('blur', () => hideToolbarTooltip(button));
-});
-window.addEventListener('resize', () => hideToolbarTooltip());
-document.addEventListener('scroll', () => hideToolbarTooltip(), true);
 
 // rooms 是当前方案中持久化的房间；tiles 只是当前打开的播放窗口。
 const rooms = [];
 const tiles = [];
 let aggregateTile = null;
-const roomEntries = new Map();
 const tileRooms = new Map();
 let activeSidebarRoom = null;
 let sidebarQuery = '';
@@ -93,13 +62,13 @@ let sidebarFilter = 'live';
 let batchMode = false;
 let mobileSidebarOpen = false;
 let savingBlocked = false;
-let dragging = null;
 let soloTile = null;
 let soloSnapshot = new Map();
 let scheduler = null;
 const ecoTimers = new Map();
-let diagnosticsTimer = 0;
-let pendingImport = null;
+let ecoMode = false;
+let latencyChase = false;
+let preferHevc = false;
 let hideOfflineWindows = false;
 let preferredFocusRid = '';
 let giftsEnabled = true;
@@ -146,8 +115,9 @@ function snapshotActiveWorkspace() {
   current.layoutRatios = (grid.dataset.ratios || '').split(',').map(Number).filter((value) => Number.isFinite(value) && value > 0);
   current.focusedRid = current.layoutMode === 'focus' ? preferredFocusRid : '';
   current.danmakuSpeed = Number($('danmakuSpeedSelect').value) || 1;
-  current.ecoMode = $('ecoModeBtn').classList.contains('on');
-  current.latencyChase = latencyChaseEnabled();
+  current.ecoMode = ecoMode;
+  current.latencyChase = latencyChase;
+  current.preferHevc = preferHevc;
 }
 
 let saveTimer = 0;
@@ -168,6 +138,11 @@ function writeStoredState() {
   syncExtensionReminders();
 }
 
+const sendReminders = createReminderSync();
+function syncExtensionReminders() {
+  sendReminders(collectReminderRooms(appState.workspaces, activeWorkspace(), rooms));
+}
+
 function flushSave({ snapshot = true } = {}) {
   if (savingBlocked) return;
   if (snapshot) snapshotActiveWorkspace();
@@ -182,18 +157,6 @@ function save({ immediate = false } = {}) {
   saveTimer = setTimeout(writeStoredState, 200);
 }
 
-let toastTimer = 0;
-function toast(message, duration = 3200, error = false) {
-  const el = $('toast');
-  el.textContent = message;
-  el.classList.toggle('error', !!error);
-  el.setAttribute('role', error ? 'alert' : 'status');
-  el.setAttribute('aria-live', error ? 'assertive' : 'polite');
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), duration);
-}
-
 // 顶栏在窄屏会换行，用实际高度保证侧栏始终贴在顶栏下方。
 const bar = document.querySelector('.bar');
 const syncBarHeight = () => {
@@ -205,7 +168,7 @@ syncBarHeight();
 
 function setToolbarHidden(hidden, { persist = true, focusControl = false } = {}) {
   const next = !!hidden;
-  hideToolbarTooltip();
+  toolbarTooltips.hide();
   const moveFocus = next && bar.contains(document.activeElement);
   // Reveal the destination before focusing it: display:none buttons cannot receive focus.
   document.body.classList.toggle('toolbar-hidden', next);
@@ -491,41 +454,14 @@ function addRoom(state, { live = null, persist = true } = {}) {
   };
   rooms.push(room);
   scheduler?.init(room, { immediate: live == null });
-  createSidebarEntry(room);
+  sidebar.add(room);
   syncEmpty();
   if (persist) save();
   return room;
 }
 
 function handleRoomLiveTransition(room, previousLive, nextLive) {
-  if (nextLive === false) room.notifiedLiveCycle = false;
-  if (previousLive !== false || nextLive !== true || room.notifiedLiveCycle || !room.s.notifyOnLive) return;
-  room.notifiedLiveCycle = true;
-  const title = room.s.title || room.s.nickname || `房间 ${room.s.rid}`;
-  toast(`${title} 已开播`);
-  const extensionRuntime = globalThis.chrome?.runtime;
-  if (extensionRuntime?.id) {
-    // 页面可见时也上报，让后台记下已开播，避免后台轮询再补发一次系统通知。
-    try {
-      Promise.resolve(extensionRuntime.sendMessage({
-        type: 'douyu-notification',
-        rid: String(room.s.rid),
-        title,
-        show: document.hidden,
-      })).catch(() => {});
-    } catch {}
-  } else if (document.hidden && globalThis.Notification?.permission === 'granted') {
-    const notification = new Notification('斗鱼直播已开播', {
-      body: `${title}（房间 ${room.s.rid}）`,
-      icon: room.s.avatar || undefined,
-      tag: `douyu-live-${room.s.rid}`,
-    });
-    notification.onclick = () => {
-      window.focus();
-      openRoomFromSidebar(room);
-      notification.close();
-    };
-  }
+  notifyLiveTransition(room, previousLive, nextLive, { onOpen: openRoomFromSidebar });
 }
 
 async function toggleRoomNotification(room) {
@@ -534,40 +470,7 @@ async function toggleRoomNotification(room) {
   syncSidebarRoom(room);
   save({ immediate: true });
   toast(room.s.notifyOnLive ? '已开启开播提醒' : '已关闭开播提醒');
-  const isExtension = !!globalThis.chrome?.runtime?.id;
-  if (!isExtension && room.s.notifyOnLive && globalThis.Notification?.permission === 'default') {
-    try {
-      await Notification.requestPermission();
-    } catch {}
-  }
-}
-
-let lastSyncedReminders = '';
-// 后台按整表替换提醒列表，所以必须汇总所有观看方案，而不只是当前方案。
-function syncExtensionReminders() {
-  const runtime = globalThis.chrome?.runtime;
-  if (!runtime?.id) return;
-  const roomsToWatch = {};
-  const watch = (state, live = null) => {
-    if (!state?.notifyOnLive) return;
-    const rid = String(state.rid);
-    const known = roomsToWatch[rid]?.live;
-    roomsToWatch[rid] = {
-      title: state.title || state.nickname || `房间 ${rid}`,
-      avatar: state.avatar || '',
-      // 未检测到状态时传 null，后台会先记录基线，不会误判为“未开播→开播”。
-      live: typeof live === 'boolean' ? live : known ?? null,
-    };
-  };
-  const current = activeWorkspace();
-  for (const workspace of appState.workspaces) {
-    if (workspace !== current) workspace.rooms.forEach((state) => watch(state));
-  }
-  rooms.forEach((room) => watch(room.s, room.live));
-  const payload = JSON.stringify(roomsToWatch);
-  if (payload === lastSyncedReminders) return;
-  lastSyncedReminders = payload;
-  try { Promise.resolve(runtime.sendMessage({ type: 'douyu-sync-reminders', rooms: roomsToWatch })).catch(() => {}); } catch {}
+  if (room.s.notifyOnLive) await requestNotificationPermission();
 }
 
 function updateRoomFromInfo(room, info, { previousLive = room.live } = {}) {
@@ -591,93 +494,31 @@ function updateRoomFromInfo(room, info, { previousLive = room.live } = {}) {
   if (changed) save();
 }
 
-function createSidebarEntry(room) {
-  const el = $('roomShortcutTpl').content.firstElementChild.cloneNode(true);
-  const q = (selector) => el.querySelector(selector);
-  const entry = {
-    el,
-    drag: q('[data-side-drag]'),
-    selectWrap: q('.room-select'),
-    select: q('[data-side-select]'),
-    open: q('[data-side-open]'),
-    remove: q('[data-side-delete]'),
-    notify: q('[data-side-notify]'),
-    dot: q('[data-side-dot]'),
-    avatar: q('[data-side-avatar]'),
-    initial: q('[data-side-initial]'),
-    title: q('[data-side-title]'),
-    state: q('[data-side-state]'),
-    rid: q('[data-side-rid]'),
-  };
-  entry.avatar.addEventListener('error', () => (entry.avatar.hidden = true));
-  entry.avatar.draggable = false;
-  entry.open.addEventListener('click', () => openRoomFromSidebar(room));
-  entry.remove.addEventListener('click', () => deleteRoom(room));
-  entry.notify.addEventListener('click', () => toggleRoomNotification(room));
-  // 拖动把手和头像/名称区域都能排序；提醒、删除、选择按钮不参与拖动
-  entry.drag.addEventListener('pointerdown', (event) => roomDrag.start(room, event));
-  entry.open.addEventListener('pointerdown', (event) => roomDrag.start(room, event));
-  // 原生图片拖拽会盖住指针事件，直接禁用
-  el.addEventListener('dragstart', (event) => event.preventDefault());
-  // 手柄是按钮，键盘用户也能用上下方向键调整顺序
-  entry.drag.addEventListener('keydown', (event) => {
-    if (event.key === 'ArrowUp') moveRoom(room, -1);
-    else if (event.key === 'ArrowDown') moveRoom(room, 1);
-    else return;
-    event.preventDefault();
-  });
-  entry.select.addEventListener('change', () => {
-    room.selected = entry.select.checked;
-    syncBatchControls();
-  });
-  roomEntries.set(room, entry);
-  roomList.appendChild(el);
-  syncSidebarRoom(room);
-}
+// —— 侧栏房间列表（DOM 见 room-sidebar.js，拖动排序见 room-drag.js）——
+const sidebar = createRoomSidebar({
+  list: roomList,
+  template: $('roomShortcutTpl'),
+  view: {
+    isOpen: (room) => !!getOpenTile(room),
+    isVisible: isRoomVisible,
+    isActive: (room) => activeSidebarRoom === room,
+    batchMode: () => batchMode,
+  },
+  actions: {
+    open: (room) => openRoomFromSidebar(room),
+    remove: (room) => deleteRoom(room),
+    toggleNotify: (room) => toggleRoomNotification(room),
+    startDrag: (room, event) => roomDrag.start(room, event),
+    move: (room, delta) => moveRoom(room, delta),
+    select: (room, checked) => {
+      room.selected = checked;
+      syncBatchControls();
+    },
+  },
+});
 
 function syncSidebarRoom(room) {
-  const entry = roomEntries.get(room);
-  if (!entry) return;
-  const openTile = getOpenTile(room);
-  // 左侧快捷入口以主播名作为主标题；昵称暂不可用时回退到直播间标题。
-  const title = room.s.nickname || room.s.title || `房间 ${room.s.rid}`;
-  const stateText = room.live === true ? '已开播' : room.live === false ? '未开播' : '检测中';
-  const stateClass = room.live === true ? 'live' : room.live === false ? 'offline' : 'checking';
-  const action = openTile ? '定位' : '打开';
-
-  entry.el.hidden = !isRoomVisible(room);
-  entry.el.dataset.rid = room.s.rid;
-  entry.el.classList.toggle('open', !!openTile);
-  entry.el.classList.toggle('batch-mode', batchMode);
-  entry.open.classList.toggle('active', activeSidebarRoom === room);
-  entry.open.dataset.live = room.live == null ? 'unknown' : String(room.live);
-  entry.open.title = `${action} ${title} · ${stateText} · 房间 ${room.s.rid}`;
-  entry.open.setAttribute('aria-label', `${action} ${title}，${stateText}，房间 ${room.s.rid}`);
-  entry.remove.setAttribute('aria-label', `从当前方案删除 ${title}`);
-  entry.drag.setAttribute('aria-label', `拖动调整 ${title} 的顺序`);
-  entry.drag.title = '拖动调整顺序';
-  // 提醒开关的真实状态只以 room.s.notifyOnLive 为准，按钮高亮与提示始终同步
-  const notifyOn = !!room.s.notifyOnLive;
-  entry.notify.classList.toggle('on', notifyOn);
-  entry.notify.setAttribute('aria-pressed', String(notifyOn));
-  entry.notify.title = notifyOn ? '关闭开播提醒' : '开启开播提醒';
-  entry.notify.setAttribute('aria-label', `${notifyOn ? '关闭' : '开启'} ${title} 的开播提醒`);
-  entry.select.setAttribute('aria-label', `选择 ${title}`);
-  entry.select.checked = room.selected;
-  entry.selectWrap.hidden = !batchMode;
-  entry.dot.className = `status-dot ${stateClass}`;
-  entry.title.textContent = title;
-  entry.state.textContent = stateText;
-  entry.rid.textContent = `#${room.s.rid}`;
-  entry.initial.textContent = [...(room.s.nickname || title || '鱼')][0] || '鱼';
-
-  const avatar = room.s.avatar || '';
-  if (entry.avatar.dataset.src !== avatar) {
-    entry.avatar.dataset.src = avatar;
-    entry.avatar.hidden = !avatar;
-    if (avatar) entry.avatar.src = avatar;
-    else entry.avatar.removeAttribute('src');
-  }
+  sidebar.sync(room);
 }
 
 function syncAllSidebarRooms() {
@@ -687,22 +528,11 @@ function syncAllSidebarRooms() {
 }
 
 function revealSidebarRoom(room) {
-  requestAnimationFrame(() => {
-    const entry = roomEntries.get(room)?.el;
-    if (!entry || entry.hidden || !roomList.clientHeight) return;
-    // 只滚动房间列表，避免连带移动右侧正在观看的画面。
-    const listRect = roomList.getBoundingClientRect();
-    const entryRect = entry.getBoundingClientRect();
-    if (entryRect.top < listRect.top) {
-      roomList.scrollTop += entryRect.top - listRect.top;
-    } else if (entryRect.bottom > listRect.bottom) {
-      roomList.scrollTop += entryRect.bottom - listRect.bottom;
-    }
-  });
+  sidebar.reveal(room);
 }
 
 function syncRoomListOrder() {
-  rooms.forEach((room) => roomList.appendChild(roomEntries.get(room).el));
+  sidebar.reorder(rooms);
   syncAllSidebarRooms();
 }
 
@@ -725,8 +555,8 @@ function applyRoomOrder(next) {
 const roomDrag = installRoomDrag({
   list: roomList,
   visibleRooms,
-  entryEl: (room) => roomEntries.get(room)?.el,
-  dragHandle: (room) => roomEntries.get(room)?.drag,
+  entryEl: sidebar.entryEl,
+  dragHandle: sidebar.dragHandle,
   onDrop: (room, target, position) => applyRoomOrder(reorderRooms(rooms, room, target, position)),
 });
 
@@ -771,7 +601,7 @@ function openRoom(room, { persist = true } = {}) {
     onState: (_tile, event) => {
       if (event?.message?.startsWith('画中画失败')) toast(event.message, 4200, true);
       syncGlobalControls();
-      if ($('diagnosticsDialog').open) renderDiagnostics();
+      diagnosticsPanel.refresh();
     },
     onVisibility: (item) => scheduleEco(item),
     onFocus: (item) => setFocusedTile(item),
@@ -807,7 +637,8 @@ function openRoom(room, { persist = true } = {}) {
   applyLayout();
   syncBatchRates();
   scheduleEco(tile);
-  tile.player.setLatencyChase(latencyChaseEnabled());
+  tile.player.setLatencyChase(latencyChase);
+  tile.setPreferHevc(preferHevc, { reload: false });
   syncSidebarRoom(room);
   syncEmpty();
   syncChatRooms();
@@ -882,8 +713,7 @@ function deleteRoom(room, { persist = true, notify = true } = {}) {
   if (tile) closeTile(tile, { persist: false, checkStatus: false });
   rooms.splice(rooms.indexOf(room), 1);
   scheduler?.cancel(room);
-  roomEntries.get(room)?.el.remove();
-  roomEntries.delete(room);
+  sidebar.remove(room);
   if (activeSidebarRoom === room) activeSidebarRoom = null;
   syncAllSidebarRooms();
   if (persist) save();
@@ -974,8 +804,7 @@ function clearRuntime() {
   [...tiles].forEach((tile) => closeTile(tile, { persist: false, checkStatus: false }));
   rooms.forEach((room) => scheduler?.cancel(room));
   rooms.splice(0, rooms.length);
-  roomEntries.clear();
-  roomList.replaceChildren();
+  sidebar.clear();
   activeSidebarRoom = null;
   sidebarQuery = '';
   sidebarFilter = 'live';
@@ -996,9 +825,9 @@ function loadWorkspaceRuntime(current) {
   grid.dataset.preset = current.layoutPreset || 'auto';
   grid.dataset.ratios = (current.layoutRatios || []).join(',');
   $('danmakuSpeedSelect').value = String(current.danmakuSpeed || 1);
-  $('ecoModeBtn').classList.toggle('on', !!current.ecoMode);
-  $('ecoModeBtn').setAttribute('aria-pressed', String(!!current.ecoMode));
-  $('latencyChaseBtn').classList.toggle('on', !!current.latencyChase);
+  ecoMode = !!current.ecoMode;
+  latencyChase = !!current.latencyChase;
+  preferHevc = !!current.preferHevc;
   setToolbarHidden(current.toolbarHidden, { persist: false });
   setShowRoomStats(current.showRoomStats, { persist: false });
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
@@ -1022,6 +851,7 @@ function loadWorkspaceRuntime(current) {
   syncChatRooms();
   syncEcoButton();
   syncLatencyChaseButton();
+  syncHevcButton();
   syncBatchRates();
   rooms.forEach((room) => {
     if (getOpenTile(room)) scheduler?.markChecked(room);
@@ -1047,40 +877,6 @@ function switchWorkspace(id, { snapshot = true } = {}) {
   savingBlocked = false;
   renderWorkspaceSelect();
   save();
-}
-
-function dialogResult(dialog) {
-  dialog.returnValue = '';
-  dialog.showModal();
-  return new Promise((resolve) => {
-    dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true });
-  });
-}
-
-async function confirmAction(message, { title = '请确认', confirmLabel = '确认', danger = false } = {}) {
-  const dialog = $('confirmDialog');
-  $('confirmTitle').textContent = title;
-  $('confirmMessage').textContent = message;
-  const submit = $('confirmSubmit');
-  submit.textContent = confirmLabel;
-  submit.classList.toggle('danger', danger);
-  return (await dialogResult(dialog)) === 'confirm';
-}
-
-async function askWorkspaceName(title, value) {
-  const dialog = $('workspaceNameDialog');
-  $('workspaceNameTitle').textContent = title;
-  const input = $('workspaceNameInput');
-  input.value = value;
-  const result = dialogResult(dialog);
-  requestAnimationFrame(() => input.select());
-  if ((await result) !== 'confirm') return null;
-  const name = input.value.trim().slice(0, 40);
-  if (!name) {
-    toast('方案名称不能为空');
-    return null;
-  }
-  return name;
 }
 
 $('workspaceSelect').addEventListener('change', (event) => switchWorkspace(event.target.value));
@@ -1244,33 +1040,30 @@ $('giftFilterForm')?.addEventListener('submit', (event) => {
   save({ immediate: true });
 });
 
-// 长按 Ctrl 呼出快速打开框。
-let ctrlTimer = 0;
+// 长按 Ctrl 呼出快速打开框；框已打开时再次长按则关闭。
 const quickSearch = $('quickSearch');
 const quickInput = $('quickSearchInput');
 const quickSearchController = bindQuickSearch({
   panel: quickSearch, input: quickInput, results: $('quickSearchResults'), status: $('quickSearchError'),
   onOpen(value) { $('addInput').value = value; $('addForm').requestSubmit(); },
 });
-function closeQuickSearch() {
-  clearTimeout(ctrlTimer); ctrlTimer = 0;
-  quickSearchController.close();
-}
-document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Control' || event.repeat || event.metaKey) return;
-  if (isEditableTarget(event.target) || document.querySelector('dialog[open]')) return;
-  ctrlTimer = setTimeout(() => {
+const ctrlLongPress = installCtrlLongPress({
+  onTrigger: () => {
     if (quickSearch.hidden) quickSearchController.open();
     else closeQuickSearch();
-  }, 300);
+  },
 });
-document.addEventListener('keyup', (event) => { if (event.key === 'Control') clearTimeout(ctrlTimer); });
+function closeQuickSearch() {
+  ctrlLongPress.cancel();
+  quickSearchController.close();
+}
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && quickSearch && !quickSearch.hidden) closeQuickSearch();
 });
 document.addEventListener('pointerdown', (event) => {
   if (quickSearch && !quickSearch.hidden && !quickSearch.contains(event.target)) closeQuickSearch();
 });
+
 // —— 搜索、筛选和批量操作 ——
 function syncBatchControls() {
   const selected = rooms.filter((room) => room.selected);
@@ -1409,12 +1202,9 @@ $('layoutModeBtn').addEventListener('click', () => {
   save({ immediate: true });
 });
 
-function ecoModeEnabled() {
-  return $('ecoModeBtn').classList.contains('on');
-}
-
 function syncEcoButton() {
-  const enabled = ecoModeEnabled();
+  const enabled = ecoMode;
+  $('ecoModeBtn').classList.toggle('on', enabled);
   $('ecoModeBtn').setAttribute('aria-pressed', String(enabled));
   setToolbarButtonLabel(
     'ecoModeBtn',
@@ -1458,7 +1248,7 @@ function scheduleEco(tile) {
   // 后台维持现有连接，节能仅处理前台视口外的窗口。
   if (document.hidden) return;
   const protectedTile = !tile.s.muted || tile === soloTile || tile.isPictureInPicture() || tile.isRecording();
-  const shouldSuspend = ecoModeEnabled() && !protectedTile && (!document.hidden && !tile.visible);
+  const shouldSuspend = ecoMode && !protectedTile && (!document.hidden && !tile.visible);
   if (!shouldSuspend) {
     tile.resumeFromEco();
     return;
@@ -1467,13 +1257,13 @@ function scheduleEco(tile) {
   const timer = setTimeout(() => {
     ecoTimers.delete(tile);
     const stillProtected = !tile.s.muted || tile === soloTile || tile.isPictureInPicture() || tile.isRecording();
-    if (ecoModeEnabled() && !stillProtected && (!document.hidden && !tile.visible)) tile.suspendForEco();
+    if (ecoMode && !stillProtected && (!document.hidden && !tile.visible)) tile.suspendForEco();
   }, 30_000);
   ecoTimers.set(tile, timer);
 }
 
 $('ecoModeBtn').addEventListener('click', () => {
-  $('ecoModeBtn').classList.toggle('on');
+  ecoMode = !ecoMode;
   syncEcoButton();
   save({ immediate: true });
 });
@@ -1481,12 +1271,9 @@ $('ecoModeBtn').addEventListener('click', () => {
 // —— 延迟对齐 ——
 // 开启后各窗口跳到最新关键帧，并用 1.1× 倍速把本地缓冲积压保持在 1.5 秒内。
 // 只能对齐浏览器端积压；主播推流与 CDN 的延迟差无法消除。
-function latencyChaseEnabled() {
-  return $('latencyChaseBtn').classList.contains('on');
-}
-
 function syncLatencyChaseButton() {
-  const enabled = latencyChaseEnabled();
+  const enabled = latencyChase;
+  $('latencyChaseBtn').classList.toggle('on', enabled);
   $('latencyChaseBtn').setAttribute('aria-pressed', String(enabled));
   setToolbarButtonLabel(
     'latencyChaseBtn',
@@ -1497,13 +1284,39 @@ function syncLatencyChaseButton() {
 }
 
 function toggleLatencyChase() {
-  $('latencyChaseBtn').classList.toggle('on');
+  latencyChase = !latencyChase;
   syncLatencyChaseButton();
   save({ immediate: true });
-  toast(latencyChaseEnabled() ? '已开启延迟对齐' : '已关闭延迟对齐');
+  toast(latencyChase ? '已开启延迟对齐' : '已关闭延迟对齐');
 }
 
 $('latencyChaseBtn').addEventListener('click', toggleLatencyChase);
+
+// —— H.265 省流 ——
+// 开启后优先拉斗鱼的 H.265 转码流，同清晰度视频码率通常更低；没有 H.265 流的房间仍用 H.264。
+// 只在浏览器能用 MSE 解 H.265（需要硬件解码）时显示开关。
+const hevcSupported = hevcPlaybackSupported();
+
+function syncHevcButton() {
+  const button = $('hevcBtn');
+  button.hidden = !hevcSupported;
+  button.classList.toggle('on', preferHevc);
+  button.setAttribute('aria-pressed', String(preferHevc));
+  setToolbarButtonLabel(
+    button,
+    preferHevc ? '关闭 H.265 省流' : 'H.265 省流',
+    preferHevc ? 'H.265 省流已开启，点击改回 H.264' : '开启 H.265 省流：同清晰度占用更少带宽，需要硬件解码'
+  );
+}
+
+$('hevcBtn').addEventListener('click', () => {
+  if (!hevcSupported) return;
+  preferHevc = !preferHevc;
+  syncHevcButton();
+  tiles.forEach((tile) => tile.setPreferHevc(preferHevc));
+  save({ immediate: true });
+  toast(preferHevc ? '已开启 H.265 省流，正在为支持的直播间切换' : '已改回 H.264');
+});
 
 // —— 批量清晰度 ——
 function syncBatchRates() {
@@ -1527,61 +1340,13 @@ $('batchRateSelect').addEventListener('change', (event) => {
   toast(`已切换 ${success} 个窗口${skipped ? `，跳过 ${skipped} 个不支持窗口` : ''}`);
 });
 
-// —— 配置备份与导入 ——
-function downloadBackup({ notify = true } = {}) {
-  snapshotActiveWorkspace();
-  const backup = createBackup(appState);
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  const stamp = backup.exportedAt.slice(0, 19).replace(/[:T]/g, '-');
-  link.href = url;
-  link.download = `douyu-multiview-${stamp}.json`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-  if (notify) toast('配置备份已下载');
-}
-
-$('backupBtn').addEventListener('click', () => downloadBackup());
-$('importBtn').addEventListener('click', () => $('importFile').click());
-$('importFile').addEventListener('change', async (event) => {
-  const file = event.target.files?.[0];
-  event.target.value = '';
-  if (!file) return;
-  if (file.size > 5 * 1024 * 1024) return toast('备份文件超过 5MB，已拒绝导入', 4500, true);
-  try {
-    pendingImport = parseBackup(await file.text());
-    const { workspaceCount, roomCount, invalidCount } = pendingImport.stats;
-    $('importSummary').textContent =
-      `检测到 ${workspaceCount} 个观看方案、${roomCount} 个房间` +
-      (invalidCount ? `，将忽略 ${invalidCount} 个无效条目。` : '。');
-    $('importDialog').querySelector('input[value="merge"]').checked = true;
-    $('importDialog').showModal();
-  } catch (error) {
-    pendingImport = null;
-    toast(error.message || '备份解析失败', 5000, true);
-  }
-});
-
-$('importDialog').addEventListener('close', async () => {
-  const dialog = $('importDialog');
-  if (dialog.returnValue !== 'confirm' || !pendingImport) {
-    pendingImport = null;
-    return;
-  }
-  const mode = dialog.querySelector('input[name="importMode"]:checked')?.value || 'merge';
-  const imported = prepareImportedWorkspaces(
-    pendingImport.state,
-    mode === 'merge' ? appState.workspaces.map((workspace) => workspace.name) : []
-  );
-  pendingImport = null;
-  if (mode === 'replace') {
-    const ok = await confirmAction(
-      '将替换全部现有观看方案。系统会先自动下载当前配置备份。',
-      { title: '替换全部配置', confirmLabel: '备份并替换', danger: true }
-    );
-    if (!ok) return;
-    downloadBackup({ notify: false });
+// —— 配置备份与导入（见 backup-ui.js）——
+installBackupUi({
+  getState: () => {
+    snapshotActiveWorkspace();
+    return appState;
+  },
+  onReplace: (imported) => {
     savingBlocked = true;
     clearRuntime();
     appState.workspaces.splice(0, appState.workspaces.length, ...imported);
@@ -1590,16 +1355,30 @@ $('importDialog').addEventListener('close', async () => {
     savingBlocked = false;
     renderWorkspaceSelect();
     save({ immediate: true });
-  } else {
+  },
+  onMerge: (imported) => {
     snapshotActiveWorkspace();
     appState.workspaces.push(...imported);
     renderWorkspaceSelect();
     switchWorkspace(imported[0].id);
-  }
-  toast(`已导入 ${imported.length} 个观看方案`);
+  },
 });
 
-// —— 连接与性能诊断 ——
+// —— 导入斗鱼关注（仅扩展版，见 follow-import.js）——
+installFollowImport({
+  hasRoom: (rid) => !!findRoom(rid),
+  onImport: (picked) => {
+    let added = 0;
+    for (const { rid, nickname, title, avatar, live } of picked) {
+      if (findRoom(rid)) continue;
+      if (addRoom({ rid, nickname, title, avatar }, { live, persist: false })) added++;
+    }
+    save({ immediate: true });
+    return added;
+  },
+});
+
+// —— 连接与性能诊断（见 diagnostics-panel.js）——
 function collectDiagnostics() {
   return tiles.map((tile) => ({
     ...tile.diagnostics(),
@@ -1607,89 +1386,25 @@ function collectDiagnostics() {
   }));
 }
 
-function renderDiagnostics() {
-  const items = collectDiagnostics();
-  const summary = diagnosticSummary(items);
-  $('diagnosticsSummary').textContent =
-    `播放 ${summary.playing} · 缓冲/重连 ${summary.pending} · 未开播 ${summary.offline} · 出错 ${summary.error}`;
-  $('diagnosticsList').replaceChildren(...items.map((item) => {
-    const row = document.createElement('div');
-    row.className = `diagnostic-row${item.state === 'error' ? ' error' : ''}`;
-    const values = diagnosticCells(item);
-    values.forEach((value, index) => {
-      const node = document.createElement(index === 0 ? 'strong' : 'span');
-      node.textContent = value;
-      row.appendChild(node);
-    });
-    row.title = item.lastError || '';
-    return row;
-  }));
-  $('retryFailedBtn').disabled = !items.some((item) => item.state === 'error');
-}
-
-function openDiagnostics() {
-  renderDiagnostics();
-  if (!$('diagnosticsDialog').open) $('diagnosticsDialog').showModal();
-  clearInterval(diagnosticsTimer);
-  diagnosticsTimer = setInterval(renderDiagnostics, 1_000);
-}
-
-$('diagnosticsBtn').addEventListener('click', openDiagnostics);
-$('diagnosticsDialog').addEventListener('close', () => {
-  clearInterval(diagnosticsTimer);
-  diagnosticsTimer = 0;
-});
-$('copyDiagnosticsBtn').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(diagnosticsText(collectDiagnostics()));
-    toast('诊断信息已复制');
-  } catch {
-    toast('复制失败，请检查浏览器剪贴板权限', 4200, true);
-  }
-});
-$('retryFailedBtn').addEventListener('click', () => {
-  const failed = tiles.filter((tile) => tile.player.state === 'error');
-  failed.forEach((tile) => tile.reload());
-  toast(`正在重试 ${failed.length} 个失败窗口`);
-  renderDiagnostics();
+const diagnosticsPanel = installDiagnosticsPanel({
+  collect: collectDiagnostics,
+  retryFailed: () => {
+    const failed = tiles.filter((tile) => tile.player.state === 'error');
+    failed.forEach((tile) => tile.reload());
+    return failed.length;
+  },
 });
 
-// —— 拖拽排序 ——
+// —— 播放窗口拖动排序（见 tile-drag.js）——
 function makeDraggable(tile) {
-  const handle = tile.el.querySelector('[data-drag-handle]');
-  handle.addEventListener('mousedown', () => (tile.el.draggable = true));
-  handle.addEventListener('mouseup', () => (tile.el.draggable = false));
-  tile.el.addEventListener('dragstart', (event) => {
-    dragging = tile;
-    tile.el.classList.add('dragging');
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', tile.s.rid);
-  });
-  tile.el.addEventListener('dragend', () => {
-    tile.el.classList.remove('dragging');
-    tile.el.draggable = false;
-    dragging = null;
-    grid.querySelectorAll('.drop-target').forEach((node) => node.classList.remove('drop-target'));
-    const order = [...grid.children].map((node) => node.dataset.rid);
-    tiles.sort((a, b) => order.indexOf(String(a.s.rid)) - order.indexOf(String(b.s.rid)));
-    syncChatRooms();
-    tiles.forEach((item) => item.resume());
-    save();
-  });
-  tile.el.addEventListener('dragover', (event) => {
-    if (!dragging || dragging === tile) return;
-    event.preventDefault();
-    tile.el.classList.add('drop-target');
-  });
-  tile.el.addEventListener('dragleave', () => tile.el.classList.remove('drop-target'));
-  tile.el.addEventListener('drop', (event) => {
-    if (!dragging || dragging === tile) return;
-    event.preventDefault();
-    tile.el.classList.remove('drop-target');
-    const nodes = [...grid.children];
-    const from = nodes.indexOf(dragging.el);
-    const to = nodes.indexOf(tile.el);
-    grid.insertBefore(dragging.el, from < to ? tile.el.nextSibling : tile.el);
+  makeTileDraggable(tile, {
+    grid,
+    onReorder: (order) => {
+      tiles.sort((a, b) => order.indexOf(String(a.s.rid)) - order.indexOf(String(b.s.rid)));
+      syncChatRooms();
+      tiles.forEach((item) => item.resume());
+      save();
+    },
   });
 }
 
@@ -1752,70 +1467,47 @@ $('muteAllBtn').addEventListener('click', toggleMuteAll);
 $('danmakuAllBtn').addEventListener('click', toggleDanmakuAll);
 $('reloadAllBtn').addEventListener('click', reloadAll);
 
-// —— 快捷键 ——
-// 只有会消费字符按键的控件才拦截全局快捷键；滑块、复选框、按钮等点过后焦点会留在上面，
-// 不能因此让快捷键失效。
-const NON_TEXT_INPUT_TYPES = new Set([
-  'range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image',
-]);
-function isEditableTarget(target) {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable || target.matches('textarea, select')) return true;
-  return target instanceof HTMLInputElement && !NON_TEXT_INPUT_TYPES.has(target.type);
+// —— 快捷键（见 shortcuts.js）——
+function revealRoomSearch() {
+  if (isMobile()) setMobileSidebar(true);
+  else if (workspaceEl.classList.contains('sidebar-hidden')) setSidebarHidden(false);
+  else if (workspaceEl.classList.contains('sidebar-collapsed')) setSidebarCollapsed(false);
+  $('roomSearch').focus();
 }
 
-function closeTopDialog() {
-  const open = document.querySelector('dialog[open]');
-  if (!open) return false;
-  open.close('cancel');
-  return true;
+function toggleSidebar() {
+  if (isMobile()) setMobileSidebar(!mobileSidebarOpen);
+  else if (workspaceEl.classList.contains('sidebar-hidden')) setSidebarHidden(false);
+  else setSidebarCollapsed(!workspaceEl.classList.contains('sidebar-collapsed'));
 }
 
-document.addEventListener('keydown', (event) => {
-  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.key === 'Escape') {
-    if (closeTopDialog()) return;
-    if (mobileSidebarOpen) {
-      setMobileSidebar(false);
-      return;
-    }
-    if (batchMode) {
-      setBatchMode(false);
-      return;
-    }
-    if (sidebarQuery) {
-      sidebarQuery = '';
-      $('roomSearch').value = '';
-      syncAllSidebarRooms();
-    }
-    return;
-  }
-  if (isEditableTarget(event.target) || document.querySelector('dialog[open]')) return;
-
-  const key = event.key.toLowerCase();
-  if (key === 'a') $('addInput').focus();
-  else if (key === '/') {
-    if (isMobile()) setMobileSidebar(true);
-    else if (workspaceEl.classList.contains('sidebar-hidden')) setSidebarHidden(false);
-    else if (workspaceEl.classList.contains('sidebar-collapsed')) setSidebarCollapsed(false);
-    $('roomSearch').focus();
-  }
-  else if (key === 'b') {
-    if (isMobile()) setMobileSidebar(!mobileSidebarOpen);
-    else if (workspaceEl.classList.contains('sidebar-hidden')) setSidebarHidden(false);
-    else setSidebarCollapsed(!workspaceEl.classList.contains('sidebar-collapsed'));
-  } else if (key === 't') setToolbarHidden(!document.body.classList.contains('toolbar-hidden'));
-  else if (key === 'c') toggleChatPanel();
-  else if (key === 'm') toggleMuteAll();
-  else if (key === 'd') toggleDanmakuAll();
-  else if (key === 'r') reloadAll();
-  else if (key === 'l') toggleLatencyChase();
-  else if (event.key === '?') $('helpDialog').showModal();
-  else if (/^[1-9]$/.test(event.key)) {
-    const tile = tiles.filter((item) => !item.el.hidden)[Number(event.key) - 1];
+installShortcuts({
+  keys: {
+    a: () => $('addInput').focus(),
+    '/': revealRoomSearch,
+    b: toggleSidebar,
+    t: () => setToolbarHidden(!document.body.classList.contains('toolbar-hidden')),
+    c: toggleChatPanel,
+    m: toggleMuteAll,
+    d: toggleDanmakuAll,
+    r: reloadAll,
+    l: toggleLatencyChase,
+    '?': () => $('helpDialog').showModal(),
+  },
+  // 1～9 独听对应的可见窗口
+  onDigit: (n) => {
+    const tile = tiles.filter((item) => !item.el.hidden)[n - 1];
     if (tile) activateSolo(tile);
-  } else return;
-  event.preventDefault();
+  },
+  // 没有对话框可关时，依次收起移动端侧栏、退出批量模式、清空房间搜索
+  onEscape: () => {
+    if (mobileSidebarOpen) return setMobileSidebar(false);
+    if (batchMode) return setBatchMode(false);
+    if (!sidebarQuery) return;
+    sidebarQuery = '';
+    $('roomSearch').value = '';
+    syncAllSidebarRooms();
+  },
 });
 
 $('helpBtn').addEventListener('click', () => $('helpDialog').showModal());

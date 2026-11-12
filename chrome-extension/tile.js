@@ -1,5 +1,5 @@
 // 单个直播窗口：播放器 + 弹幕 + 独立音量/弹幕控制
-import { Player } from './player.js';
+import { Player, hevcPlaybackSupported } from './player.js';
 import { DanmakuClient } from './danmaku-client.js';
 import { DanmakuRenderer } from './danmaku-render.js';
 import { DanmakuFilter } from './danmaku-filter.js';
@@ -84,6 +84,11 @@ export class Tile {
     this.visible = true;
     this.availableRates = [];
     this.ecoSuspended = false;
+    // H.265：preferHevc 是全局开关；hevcBlocked 表示本窗口解码失败过，之后只用 H.264。
+    this.preferHevc = false;
+    this.hevcBlocked = false;
+    this.streamCodec = '';
+    this.noHevcStream = false; // 请求过 H.265 但房间只有 H.264
     this.controlsTimer = 0;
     this.controlsVisible = false;
     this.pointerPressed = false;
@@ -145,6 +150,7 @@ export class Tile {
       onState: (e) => this.onPlayerState(e),
       onStreamData: (chunk, token) => this.onStreamData(chunk, token),
       isRecording: () => this.recorder.armed,
+      onMediaFailure: (reason) => this.handleMediaFailure(reason),
     });
 
     this.bindEvents();
@@ -283,9 +289,10 @@ export class Tile {
 
   // —— 数据加载 ——
   async fetchUrl({ signal } = {}) {
+    const codec = this.codecQuery();
     let j;
     try {
-      j = await fetchJson(`/api/stream?rid=${this.s.rid}&rate=${this.s.rate}`, { signal });
+      j = await fetchJson(`/api/stream?rid=${this.s.rid}&rate=${this.s.rate}${codec}`, { signal });
     } catch (e) {
       // 下播后重连取流会得到 -5；按下播处理，否则只会无限重连且不会被自动隐藏。
       // showOffline 会让播放器换代，这次加载随后的失败会被忽略。
@@ -294,6 +301,7 @@ export class Tile {
     }
     // 每次取流都同步清晰度列表：斗鱼返回的 multirates 会变，首次可能为空
     this.fillRates(j.stream.rates, j.stream.rate);
+    this.noteStream(j.stream, !!codec);
     return j.stream.url;
   }
 
@@ -304,9 +312,10 @@ export class Tile {
     const controller = new AbortController();
     this.loadController = controller;
     this.player.setExternalState('loading');
+    const codec = this.codecQuery();
     try {
       const j = await fetchJson(
-        `/api/resolve?input=${encodeURIComponent(this.s.rid)}&rate=${this.s.rate}`,
+        `/api/resolve?input=${encodeURIComponent(this.s.rid)}&rate=${this.s.rate}${codec}`,
         { signal: controller.signal }
       );
       if (this.destroyed || seq !== this.loadSeq) return;
@@ -321,6 +330,7 @@ export class Tile {
         return;
       }
       this.fillRates(j.stream.rates, j.stream.rate);
+      this.noteStream(j.stream, !!codec);
       this.hideOverlay();
       // /api/resolve 已给出有效流地址，首播直接使用，避免紧接着再签一次 /api/stream。
       this.player.reload({ initialUrl: j.stream.url, signal: controller.signal, reason });
@@ -822,6 +832,34 @@ export class Tile {
     return true;
   }
 
+  // 只有开关打开、浏览器能硬解、本窗口没解码失败过时才请求 H.265。
+  codecQuery() {
+    return this.preferHevc && !this.hevcBlocked && hevcPlaybackSupported() ? '&hevc=1' : '';
+  }
+
+  noteStream(stream, requestedHevc) {
+    this.streamCodec = stream?.codec === 'hevc' ? 'hevc' : 'avc';
+    this.noHevcStream = requestedHevc && this.streamCodec !== 'hevc';
+  }
+
+  // 开关变化时，正在播放且编码需要改变的窗口立即换流；其余窗口在下次加载时生效。
+  setPreferHevc(on, { reload = true } = {}) {
+    const next = !!on;
+    if (next === this.preferHevc) return;
+    this.preferHevc = next;
+    if (!reload || this.destroyed || this.ecoSuspended || this.live !== true || !this.streamCodec) return;
+    const switchToHevc = next && this.streamCodec === 'avc' && !this.noHevcStream && !!this.codecQuery();
+    const switchToAvc = !next && this.streamCodec === 'hevc';
+    if (switchToHevc || switchToAvc) this.player.reload({ reason: 'codec' });
+  }
+
+  // H.265 解码失败（多为没有硬件解码）时本窗口改用 H.264；播放器随后会自行重连。
+  handleMediaFailure(reason) {
+    if (this.streamCodec !== 'hevc' || this.hevcBlocked) return;
+    this.hevcBlocked = true;
+    this.player.recordSyncEvent('hevc-fallback', reason);
+  }
+
   setFocused(on) {
     this.el.classList.toggle('focus-main', !!on);
     this.$.focus.classList.toggle('on', !!on);
@@ -898,6 +936,8 @@ export class Tile {
       rid: this.s.rid,
       title: this.s.title || `房间 ${this.s.rid}`,
       rateName: this.$.rate.selectedOptions[0]?.textContent || '',
+      codec: this.streamCodec,
+      hevcBlocked: this.hevcBlocked,
       ...this.player.diagnostics(),
     };
   }

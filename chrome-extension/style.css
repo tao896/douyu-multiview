@@ -452,7 +452,8 @@ body.toolbar-hidden .toolbar-reveal { display: grid; }
 }
 .sidebar-tools input::placeholder { color: var(--faint); }
 .sidebar-tools input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.sidebar-tool-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+/* 筛选框占满剩余宽度，后面的按钮（批量、扩展版的导入关注）按内容宽度排在同一行 */
+.sidebar-tool-row { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; gap: 7px; }
 .sidebar-tool-row .ghost { padding: 6px 10px; }
 
 .room-list-empty {
@@ -1364,6 +1365,46 @@ input[type="range"]::-moz-range-thumb {
 .result-modal code { color: var(--text); overflow-wrap: anywhere; }
 .choice { display: block; margin: 10px 0; color: var(--dim); }
 .choice input { accent-color: var(--accent); }
+.follow-modal { width: min(520px, calc(100vw - 32px)); }
+.modal p.follow-status { margin: 0 0 10px; }
+.follow-status a { color: var(--accent); }
+.follow-pick { display: flex; gap: 6px; margin-bottom: 8px; }
+.follow-pick .ghost { padding: 5px 10px; font-size: 12px; }
+.follow-list { display: grid; gap: 4px; max-height: min(56vh, 460px); margin: 0; padding: 0; overflow: auto; list-style: none; }
+.follow-list:empty { display: none; }
+.follow-item {
+  display: grid;
+  grid-template-columns: auto 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.follow-item:has(input:checked:not(:disabled)) { border-color: var(--accent-line); background: var(--accent-soft); }
+.follow-item:has(input:disabled) { cursor: default; opacity: .6; }
+.follow-item input { accent-color: var(--accent); }
+.follow-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  background: var(--accent-soft);
+  border-radius: 50%;
+}
+.follow-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.follow-text { display: flex; flex-direction: column; min-width: 0; }
+.follow-text strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.follow-text small { overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.follow-badge { padding: 2px 7px; color: var(--faint); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; }
+.follow-badge.live { color: var(--live); border-color: rgba(43, 182, 115, .45); }
 .diagnostics-modal { width: min(760px, calc(100vw - 32px)); }
 .diagnostics-list { display: grid; gap: 8px; max-height: min(58vh, 520px); overflow: auto; }
 .diagnostic-row {

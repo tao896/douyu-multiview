@@ -805,3 +805,111 @@ test('hides the tile when reconnect finds the stream offline (-5) while room inf
   await expect(tile).toBeHidden({ timeout: 8_000 });
   await expect(page.locator('#emptyTitle')).toHaveText('未开播窗口已隐藏');
 });
+
+test('H.265 toggle requests hevc streams, shows the codec and persists', async ({ page }) => {
+  // 测试用 Chromium 不带 HEVC 解码器，这里假装支持，只验证取流参数与界面
+  await page.addInitScript(() => {
+    const original = MediaSource.isTypeSupported.bind(MediaSource);
+    MediaSource.isTypeSupported = (type) => /hvc1|hev1/.test(type) || original(type);
+  });
+  await mockApplication(page);
+  const requests = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/resolve' || url.pathname === '/api/stream') {
+      requests.push(`${url.pathname.slice(5)}:${url.searchParams.get('hevc') === '1' ? 'hevc' : 'avc'}`);
+    }
+  });
+  await page.route('**/api/stream**', (route) => {
+    const hevc = new URL(route.request().url()).searchParams.get('hevc') === '1';
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      rid: '100',
+      stream: { url: `https://stream.invalid/${hevc ? 'hevc' : 'avc'}.flv`, codec: hevc ? 'hevc' : 'avc', rate: 0, rates: [] },
+    }) });
+  });
+  await page.goto('/');
+  await expect(page.locator('#followImportBtn')).toBeHidden(); // 网页版没有扩展后台，不能导入关注
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect(page.getByRole('link', { name: /测试直播间 100/ })).toBeVisible();
+
+  const hevcButton = page.locator('#hevcBtn');
+  await expect(hevcButton).toHaveAttribute('aria-pressed', 'false');
+  await hevcButton.click();
+  await expect(hevcButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => requests.filter((item) => item.startsWith('stream'))).toEqual(['stream:hevc']);
+
+  await page.getByRole('button', { name: /^状态 / }).click();
+  await expect(page.getByRole('dialog', { name: '连接与性能诊断' }).getByText(/H\.265/)).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+
+  await hevcButton.click();
+  await expect(hevcButton).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => requests.filter((item) => item.startsWith('stream'))).toEqual(['stream:hevc', 'stream:avc']);
+
+  await hevcButton.click();
+  await expect.poll(() => requests.filter((item) => item.startsWith('stream')).length).toBe(3);
+  requests.length = 0;
+  await page.reload();
+  await expect(hevcButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => requests.some((item) => item.endsWith(':hevc'))).toBe(true);
+});
+
+// 模拟扩展页面：API 请求经 douyu-api 消息转回被 mock 的 /api，关注列表直接返回给定结果
+async function stubExtensionRuntime(page, followResponse) {
+  await page.addInitScript((follow) => {
+    const runtime = {
+      id: 'e2e-extension',
+      lastError: undefined,
+      sendMessage(message, callback) {
+        const reply = (value) => setTimeout(() => callback?.(value), 0);
+        if (message?.type === 'douyu-api') {
+          fetch(message.path).then((response) => response.json())
+            .then((data) => reply({ ok: true, data }), (error) => reply({ ok: false, error: String(error) }));
+        } else if (message?.type === 'douyu-follow-list') {
+          window.__followRequests = (window.__followRequests || 0) + 1;
+          reply(follow);
+        } else reply({ ok: false, error: '测试未模拟' });
+      },
+    };
+    Object.defineProperty(window, 'chrome', { configurable: true, value: { runtime } });
+  }, followResponse);
+}
+
+test('extension imports picked rooms from the Douyu follow list', async ({ page }) => {
+  await stubExtensionRuntime(page, { ok: true, rooms: [
+    { rid: '300', nickname: '离线主播', title: '休息中', avatar: '', live: false },
+    { rid: '100', nickname: '测试主播', title: '已添加', avatar: '', live: true },
+    { rid: '200', nickname: '开播主播', title: '正在直播', avatar: '', live: true },
+  ] });
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('100');
+  await page.getByRole('button', { name: '添加' }).click();
+  await expect(page.getByRole('link', { name: /测试直播间 100/ })).toBeVisible();
+
+  await page.getByRole('button', { name: '导入关注' }).click();
+  const dialog = page.getByRole('dialog', { name: '导入斗鱼关注' });
+  await expect(dialog.getByRole('status')).toHaveText('共关注 3 个直播间，2 个直播中，1 个已在当前方案。');
+  // 直播中的排在前面；已在方案中的不能再勾选
+  await expect(dialog.locator('.follow-text strong')).toHaveText(['测试主播', '开播主播', '离线主播']);
+  await expect(dialog.getByRole('checkbox').first()).toBeDisabled();
+  await dialog.getByRole('button', { name: '只选直播中' }).click();
+  await dialog.getByRole('button', { name: '添加 1 个' }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => roomRids(page)).toEqual(['100', '200']);
+  await expect(page.locator('.toast')).toContainText('已导入 1 个直播间');
+});
+
+test('follow import explains how to log in when the extension has no Douyu session', async ({ page }) => {
+  await stubExtensionRuntime(page, { ok: false, error: '请先在浏览器中登录斗鱼', relogin: true });
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: '导入关注' }).click();
+  const dialog = page.getByRole('dialog', { name: '导入斗鱼关注' });
+  await expect(dialog.getByRole('status')).toContainText('请先在浏览器中登录斗鱼');
+  await expect(dialog.getByRole('link', { name: '打开斗鱼登录' })).toHaveAttribute('href', 'https://www.douyu.com/');
+  await expect(dialog.getByRole('button', { name: '添加' })).toBeDisabled();
+  await dialog.getByRole('button', { name: '取消' }).click();
+  await expect(dialog).toBeHidden();
+});
