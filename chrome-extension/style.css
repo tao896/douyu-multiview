@@ -1243,6 +1243,9 @@ input[type="range"]::-moz-range-thumb {
   max-width: 76px;
   padding-inline: 4px;
 }
+/* 自动清晰度：自动档用强调色文字，手动锁定的窗口用强调色边框 */
+.rate.rate-auto { color: var(--accent-2); }
+.rate.rate-locked { border-color: var(--accent-line); }
 /* 为全屏按钮独立留出右侧空间，其他控件换行也不会挤走它。 */
 .tile-foot { padding-right: calc(var(--control-size) + clamp(5px, 1.5cqw, 10px) + clamp(3px, 1cqw, 8px)); }
 .tile-foot [data-act="fullscreen"] {

@@ -6,6 +6,7 @@ import { DanmakuFilter } from './danmaku-filter.js';
 import { RoomRecorder } from './flv-recorder.js';
 import { fetchJson, isAbortError } from './net.js';
 
+import { describeAutoQuality } from './auto-quality.js';
 import { resolveGift } from './gift-config.js';
 import { normalizeGiftValueFilter } from './state.js';
 
@@ -42,6 +43,8 @@ export class Tile {
     onRanks,
     onGifts,
     onRecord,
+    onAutoQuality,
+    pickRate,
     danmakuConfig,
   }) {
     this.s = {
@@ -51,6 +54,7 @@ export class Tile {
       danmaku: true,
       opacity: 1,
       expanded: false,
+      rateLocked: false,
       ...state,
     };
     // 直播状态必须以本次请求为准，不能使用 localStorage 里的旧值。
@@ -69,6 +73,11 @@ export class Tile {
     this.onRanks = onRanks || (() => {});
     this.onGifts = onGifts || (() => {});
     this.onRecord = onRecord || (() => {});
+    // 自动清晰度：onAutoQuality 在锁定状态变化时通知页面重新评估；pickRate 在首播前给出目标档位。
+    this.onAutoQuality = onAutoQuality || (() => {});
+    this.pickRate = pickRate || (() => null);
+    this.autoQuality = false;
+    this.autoInfo = null;
     this.recorder = new RoomRecorder({
       getName: () => ({ nickname: this.s.nickname, rid: this.s.rid }),
       onEvent: (event) => this.onRecorderEvent(event),
@@ -199,7 +208,10 @@ export class Tile {
     this.$.vol.addEventListener('input', () => this.setVolume(Number(this.$.vol.value)));
     this.$.opacity.addEventListener('input', () => this.setOpacity(Number(this.$.opacity.value) / 100));
     this.$.rate.addEventListener('change', () => {
-      this.setRate(Number(this.$.rate.value));
+      const value = this.$.rate.value;
+      // 自动清晰度开启时，手动选的档位会锁定，选「自动」解除
+      if (value === 'auto') this.setRateLocked(false);
+      else this.setRate(Number(value), { lock: this.autoQuality });
       // 选完清晰度就交还焦点，否则下拉框会继续吞掉全局快捷键
       this.$.rate.blur();
     });
@@ -332,6 +344,15 @@ export class Tile {
       this.fillRates(j.stream.rates, j.stream.rate);
       this.noteStream(j.stream, !!codec);
       this.hideOverlay();
+      // 自动清晰度要的档位和这次签名的不同：直接按目标档位取流，省掉一次先播再切的重连。
+      const picked = this.pickRate(this);
+      if (picked != null && this.availableRates.some((rate) => Number(rate.rate) === picked) && picked !== Number(this.s.rate)) {
+        this.s.rate = picked;
+        this.syncRateSelect();
+        this.onChange();
+        this.player.reload({ signal: controller.signal, reason: `${reason}+auto-rate` });
+        return;
+      }
       // /api/resolve 已给出有效流地址，首播直接使用，避免紧接着再签一次 /api/stream。
       this.player.reload({ initialUrl: j.stream.url, signal: controller.signal, reason });
     } catch (e) {
@@ -427,12 +448,54 @@ export class Tile {
       return option;
     }));
     // 记住的清晰度可能已不在列表里，回落到当前实际码率
-    const want = String(this.s.rate);
-    this.$.rate.value = [...this.$.rate.options].some((o) => o.value === want)
-      ? want
-      : String(current ?? 0);
-    this.s.rate = Number(this.$.rate.value);
+    if (!this.availableRates.some((rate) => String(rate.rate) === String(this.s.rate))) {
+      const fallback = this.availableRates.find((rate) => String(rate.rate) === String(current ?? 0)) || this.availableRates[0];
+      this.s.rate = Number(fallback.rate);
+    }
+    this.syncRateSelect();
     this.onRates(this);
+  }
+
+  rateName(rate = this.s.rate) {
+    return this.availableRates.find((item) => String(item.rate) === String(rate))?.name || '';
+  }
+
+  // 下拉框只更新「自动」选项、选中值和提示，不重建档位列表，避免打断正在展开的下拉框。
+  syncRateSelect() {
+    const select = this.$.rate;
+    const name = this.rateName();
+    let autoOption = select.querySelector('option[value="auto"]');
+    const showAuto = this.autoQuality && this.availableRates.length > 0;
+    if (showAuto) {
+      if (!autoOption) {
+        autoOption = document.createElement('option');
+        autoOption.value = 'auto';
+        select.prepend(autoOption);
+      }
+      const text = name ? `自动·${name}` : '自动';
+      if (autoOption.textContent !== text) autoOption.textContent = text;
+    } else {
+      autoOption?.remove();
+    }
+    const locked = showAuto && !!this.s.rateLocked;
+    const value = showAuto && !locked ? 'auto' : String(this.s.rate);
+    if (select.value !== value) select.value = value;
+    select.classList.toggle('rate-auto', showAuto && !locked);
+    select.classList.toggle('rate-locked', locked);
+    let label = '清晰度';
+    if (showAuto) {
+      const hold = this.autoQualityHold();
+      if (hold === 'locked') label = `清晰度已锁定为 ${name}；选择「自动」交给自动清晰度`;
+      else if (hold === 'recording') label = `自动清晰度：录制中保持 ${name}，停止录制后恢复自动`;
+      else {
+        const detail = describeAutoQuality(this.autoInfo);
+        label = `自动清晰度：当前 ${name}${detail ? `（${detail}）` : ''}；手动选择档位会锁定`;
+      }
+    }
+    if (select.title !== label) {
+      select.title = label;
+      select.setAttribute('aria-label', label);
+    }
   }
 
   connectDanmaku() {
@@ -685,6 +748,7 @@ export class Tile {
       clearInterval(this.recordTimer);
       this.recordTimer = 0;
     }
+    if (event.type === 'armed' || event.type === 'disarmed') this.syncRateSelect();
     this.renderRecord();
     if (this.destroyed && event.type !== 'saved' && event.type !== 'error') return;
     this.onRecord(this, event);
@@ -816,19 +880,75 @@ export class Tile {
     this.$.solo.setAttribute('aria-pressed', String(!!on));
   }
 
-  async setRate(rate) {
-    this.s.rate = rate;
+  // lock：自动清晰度开启时用户手动选档，锁定后自动清晰度不再改动这个窗口。
+  // 录制中切档时，录制器会发现编码配置变化并在关键帧处另起新文件。
+  setRate(rate, { lock = false } = {}) {
+    const changed = Number(rate) !== Number(this.s.rate);
+    const lockChanged = lock && !this.s.rateLocked;
+    if (lock) this.s.rateLocked = true;
+    this.s.rate = Number(rate);
+    this.syncRateSelect();
+    if (!changed && !lockChanged) return;
     this.onChange();
-    this.player.reload({ reason: 'rate' });
+    if (lockChanged) this.onAutoQuality(this);
+    if (changed) this.player.reload({ reason: 'rate' });
   }
 
-  setRateByName(name) {
+  setRateByName(name, { lock = false } = {}) {
     const normalized = String(name || '').trim().toLocaleLowerCase('zh-CN');
     const rate = this.availableRates.find(
       (item) => item.name.trim().toLocaleLowerCase('zh-CN') === normalized
     );
     if (!rate) return false;
-    if (Number(rate.rate) !== Number(this.s.rate)) this.setRate(Number(rate.rate));
+    this.setRate(Number(rate.rate), { lock });
+    return true;
+  }
+
+  // —— 自动清晰度 ——
+  setAutoQuality(enabled) {
+    this.autoQuality = !!enabled;
+    if (!this.autoQuality) this.autoInfo = null;
+    this.syncRateSelect();
+  }
+
+  setRateLocked(locked) {
+    const next = !!locked;
+    if (next === !!this.s.rateLocked) return;
+    this.s.rateLocked = next;
+    this.syncRateSelect();
+    this.onChange();
+    this.onAutoQuality(this);
+  }
+
+  // 自动清晰度不能动的原因：用户锁定，或正在录制（含等待开播）。
+  autoQualityHold() {
+    if (this.s.rateLocked) return 'locked';
+    if (this.recorder.armed) return 'recording';
+    return '';
+  }
+
+  setAutoQualityInfo(info) {
+    this.autoInfo = info || null;
+    this.syncRateSelect();
+  }
+
+  // 诊断面板里的自动清晰度状态
+  autoQualityLabel() {
+    if (!this.autoQuality) return '';
+    const hold = this.autoQualityHold();
+    if (hold === 'locked') return '已锁定';
+    if (hold === 'recording') return '录制中保持';
+    return `自动 · ${describeAutoQuality(this.autoInfo) || '评估中'}`;
+  }
+
+  applyAutoRate(rate, reason = '') {
+    if (this.destroyed || !this.autoQuality || this.autoQualityHold()) return false;
+    if (Number(rate) === Number(this.s.rate) || !this.availableRates.some((item) => Number(item.rate) === Number(rate))) return false;
+    this.s.rate = Number(rate);
+    this.syncRateSelect();
+    this.onChange();
+    this.player.recordSyncEvent('auto-rate', reason);
+    this.player.reload({ reason: 'auto-rate' });
     return true;
   }
 
@@ -935,7 +1055,8 @@ export class Tile {
     return {
       rid: this.s.rid,
       title: this.s.title || `房间 ${this.s.rid}`,
-      rateName: this.$.rate.selectedOptions[0]?.textContent || '',
+      rateName: this.rateName(),
+      autoQuality: this.autoQualityLabel(),
       codec: this.streamCodec,
       hevcBlocked: this.hevcBlocked,
       ...this.player.diagnostics(),

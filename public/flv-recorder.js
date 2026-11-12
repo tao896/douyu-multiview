@@ -49,6 +49,13 @@ function tagTime(tag) {
   return ((tag[7] << 24) | (tag[4] << 16) | (tag[5] << 8) | tag[6]) >>> 0;
 }
 
+// 只比较 tag 正文（去掉 11 字节头和 4 字节尾）：同一配置在不同连接里时间戳不同。
+function sameTagBody(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = TAG_HEADER_SIZE; i < a.length - PREVIOUS_TAG_SIZE; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function withTime(tag, time) {
   const out = tag.slice();
   out[4] = (time >> 16) & 0xff;
@@ -68,6 +75,8 @@ export class FlvRemuxer {
     this.headerWritten = false;
     this.offset = 0;
     this.lastTime = -1;
+    this.fileConfigs = null; // 当前文件里已写入的音视频编码配置
+    this.splitReason = '';
     this.resetStream();
   }
 
@@ -85,10 +94,7 @@ export class FlvRemuxer {
 
   start() {
     this.recording = true;
-    this.headerWritten = false;
-    this.offset = 0;
-    this.lastTime = -1;
-    this.base = -1;
+    this.endFile();
   }
 
   stop() { this.recording = false; }
@@ -99,6 +105,14 @@ export class FlvRemuxer {
     this.offset = 0;
     this.lastTime = -1;
     this.base = -1;
+    this.fileConfigs = null;
+  }
+
+  // 上一个文件为什么结束：reconfigure 表示新连接换了编码配置；其余为 split。
+  takeSplitReason() {
+    const reason = this.splitReason || 'split';
+    this.splitReason = '';
+    return reason;
   }
 
   // token 区分不同连接：每条新连接都从 FLV 头重新开始。
@@ -159,7 +173,10 @@ export class FlvRemuxer {
     if (kind === 'video-config' || kind === 'audio-config') {
       this[kind === 'video-config' ? 'videoConfig' : 'audioConfig'] = tag;
       // 段内编码参数变化（如分辨率切换）需要把新配置也写进文件。
-      if (this.recording && this.base >= 0) out.push(withTime(tag, this.lastTime));
+      if (this.recording && this.base >= 0) {
+        out.push(withTime(tag, this.lastTime));
+        if (this.fileConfigs) this.fileConfigs[kind === 'video-config' ? 'video' : 'audio'] = tag;
+      }
       return;
     }
     if (!this.recording) return;
@@ -190,6 +207,12 @@ export class FlvRemuxer {
   }
 
   beginSegment(time, out) {
+    // 重连后编码配置变了（切清晰度、改用 H.265 等）：分辨率或编码不同的两段混在一个 FLV 里，
+    // 很多播放器会花屏或无法拖动，因此不接在原文件后面，而是在这个关键帧处另起新文件。
+    if (this.headerWritten && this.configChanged()) {
+      this.endFile();
+      this.splitReason = 'reconfigure';
+    }
     this.base = time;
     if (!this.headerWritten) {
       this.headerWritten = true;
@@ -198,7 +221,16 @@ export class FlvRemuxer {
     }
     if (this.videoConfig) out.push(withTime(this.videoConfig, this.offset));
     if (this.audioConfig) out.push(withTime(this.audioConfig, this.offset));
+    this.fileConfigs = { video: this.videoConfig, audio: this.audioConfig };
     this.lastTime = Math.max(this.lastTime, this.offset);
+  }
+
+  // 新连接还没收到的配置不算变化，避免配置晚到时误拆文件。
+  configChanged() {
+    const written = this.fileConfigs;
+    if (!written) return false;
+    const differs = (next, previous) => !!next && !!previous && !sameTagBody(next, previous);
+    return differs(this.videoConfig, written.video) || differs(this.audioConfig, written.audio);
   }
 }
 
@@ -354,7 +386,7 @@ export class RoomRecorder {
       if (i < out.length && out[i] !== FILE_START) continue;
       if (i > start) this.write(out.slice(start, i));
       if (i < out.length) {
-        this.closeFile('split');
+        this.closeFile(this.remuxer.takeSplitReason());
         this.openFile();
       }
       start = i + 1;
@@ -386,7 +418,7 @@ export class RoomRecorder {
     this.onEvent({ type: 'file', fileName });
   }
 
-  // reason: split（分段）/ offline（下播）/ stop（手动停止）
+  // reason: split（分段）/ reconfigure（清晰度或编码变化，另起新文件）/ offline（下播）/ stop（手动停止）
   closeFile(reason) {
     const sink = this.sink;
     if (!sink) return Promise.resolve();

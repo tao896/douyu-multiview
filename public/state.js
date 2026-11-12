@@ -11,6 +11,7 @@ export const ROOM_STATE_KEYS = [
   'nickname',
   'avatar',
   'rate',
+  'rateLocked',
   'volume',
   'muted',
   'danmaku',
@@ -44,6 +45,7 @@ export function normalizeRoomState(state = {}) {
     const rate = Number(out.rate);
     out.rate = Number.isInteger(rate) && rate >= 0 && rate <= 10_000 ? rate : 0;
   }
+  if (out.rateLocked !== undefined) out.rateLocked = !!out.rateLocked;
   if (out.volume !== undefined) out.volume = Math.max(0, Math.min(100, Number(out.volume) || 0));
   if (out.opacity !== undefined) out.opacity = Math.max(0.1, Math.min(1, Number(out.opacity) || 1));
   if (out.muted !== undefined) out.muted = !!out.muted;
@@ -93,6 +95,7 @@ export function normalizeWorkspace(raw = {}, index = 0) {
     ecoMode: !!raw.ecoMode,
     latencyChase: !!raw.latencyChase,
     preferHevc: !!raw.preferHevc,
+    autoQuality: !!raw.autoQuality,
     rooms,
     openRids,
     danmaku: normalizeDanmakuConfig(raw.danmaku),

@@ -4,6 +4,7 @@ import { bindQuickSearch } from './quick-search.js';
 import { ChatPanel } from './chat-panel.js';
 import { Tile } from './tile.js';
 import { hevcPlaybackSupported } from './player.js';
+import { createAutoQualityController } from './auto-quality.js';
 import { fetchJson, isAbortError } from './net.js';
 import { RoomStatusScheduler } from './room-scheduler.js';
 import { installRoomDrag } from './room-drag.js';
@@ -69,11 +70,24 @@ const ecoTimers = new Map();
 let ecoMode = false;
 let latencyChase = false;
 let preferHevc = false;
+let autoQuality = false;
 let hideOfflineWindows = false;
 let preferredFocusRid = '';
 let giftsEnabled = true;
 let giftNameFilter = '';
 let giftValueFilter = null;
+
+// 自动清晰度：焦点、独听、画中画、全屏窗口算主窗口，优先最高档。
+function isAutoQualityPriority(tile) {
+  if (tile === soloTile || tile.isPictureInPicture()) return true;
+  if (grid.dataset.layout === 'focus' && tile.el.classList.contains('focus-main')) return true;
+  const fullscreen = document.fullscreenElement;
+  return !!fullscreen && tile.el.contains(fullscreen);
+}
+const autoQualityController = createAutoQualityController({
+  getTiles: () => tiles,
+  isPriority: isAutoQualityPriority,
+});
 
 function readStored(key) {
   try {
@@ -118,6 +132,7 @@ function snapshotActiveWorkspace() {
   current.ecoMode = ecoMode;
   current.latencyChase = latencyChase;
   current.preferHevc = preferHevc;
+  current.autoQuality = autoQuality;
 }
 
 let saveTimer = 0;
@@ -603,12 +618,18 @@ function openRoom(room, { persist = true } = {}) {
       syncGlobalControls();
       diagnosticsPanel.refresh();
     },
-    onVisibility: (item) => scheduleEco(item),
+    onVisibility: (item) => {
+      scheduleEco(item);
+      autoQualityController.refresh();
+    },
     onFocus: (item) => setFocusedTile(item),
     onDanmaku: (source, chat) => dispatchDanmaku(source, chat),
     onAggregate: (item) => toggleAggregate(item),
     onRates: () => syncBatchRates(),
-    onPiP: (item) => scheduleEco(item),
+    onPiP: (item) => {
+      scheduleEco(item);
+      autoQualityController.refresh();
+    },
     onRanks: (item) => {
       if (String(item.s.rid) === chatPanel.rid) chatPanel.setRanks(chatPanel.rid, item.ranks);
       syncChatParty();
@@ -619,9 +640,15 @@ function openRoom(room, { persist = true } = {}) {
     onRecord: (item, event) => {
       const message = recordToast(item, event);
       if (message) toast(message, event.type === 'error' ? 5000 : 3600, event.type === 'error');
-      // 录制中（含等待开播）的窗口不能被节能暂停，否则会断录或错过开播。
-      if (event.type === 'armed' || event.type === 'disarmed') scheduleEco(item);
+      // 录制中（含等待开播）的窗口不能被节能暂停，否则会断录或错过开播；
+      // 也不被自动清晰度切档，结束录制后重新纳入。
+      if (event.type === 'armed' || event.type === 'disarmed') {
+        scheduleEco(item);
+        autoQualityController.refresh();
+      }
     },
+    onAutoQuality: () => autoQualityController.refresh(),
+    pickRate: (item) => autoQualityController.initialRate(item),
     danmakuConfig: activeWorkspace().danmaku,
   });
   tiles.push(tile);
@@ -639,6 +666,7 @@ function openRoom(room, { persist = true } = {}) {
   scheduleEco(tile);
   tile.player.setLatencyChase(latencyChase);
   tile.setPreferHevc(preferHevc, { reload: false });
+  tile.setAutoQuality(autoQuality);
   syncSidebarRoom(room);
   syncEmpty();
   syncChatRooms();
@@ -751,6 +779,7 @@ function syncSoloUi() {
     : '';
   tiles.forEach((tile) => tile.setSolo(active && tile === soloTile));
   syncGlobalControls();
+  autoQualityController.refresh();
 }
 
 function activateSolo(tile) {
@@ -828,6 +857,9 @@ function loadWorkspaceRuntime(current) {
   ecoMode = !!current.ecoMode;
   latencyChase = !!current.latencyChase;
   preferHevc = !!current.preferHevc;
+  // 先开启控制器，随后打开的窗口首播就能直接取目标档位。
+  autoQuality = !!current.autoQuality;
+  autoQualityController.setEnabled(autoQuality);
   setToolbarHidden(current.toolbarHidden, { persist: false });
   setShowRoomStats(current.showRoomStats, { persist: false });
   setSidebarCollapsed(current.sidebarCollapsedDesktop, { persist: false });
@@ -852,7 +884,7 @@ function loadWorkspaceRuntime(current) {
   syncEcoButton();
   syncLatencyChaseButton();
   syncHevcButton();
-  syncBatchRates();
+  syncAutoQualityButton();
   rooms.forEach((room) => {
     if (getOpenTile(room)) scheduler?.markChecked(room);
     else room.nextCheckAt = 0;
@@ -1159,6 +1191,7 @@ function applyLayout(preferredRid = preferredFocusRid) {
     focusMode ? '网格布局' : '焦点布局',
     focusMode ? '切换到网格布局' : '切换到焦点布局'
   );
+  autoQualityController.refresh();
 }
 
 function installLayoutDivider() {
@@ -1222,8 +1255,11 @@ function recordToast(tile, event) {
       if (!event.dir) return `${name}：开始录制，浏览器不支持选择目录，每段录完后自动下载`;
       return `${name}：开始录制到「${event.dir}」，每 30 分钟一个文件；下播后会在开播时自动续录`;
     case 'saved':
-      // 分段换文件很频繁，不打扰；下播和手动停止时告知。
+      // 分段换文件很频繁，不打扰；下播、手动停止和因换档另起文件时告知。
       if (event.reason === 'split') return '';
+      if (event.reason === 'reconfigure') {
+        return `${name}：清晰度或编码已变化，录制另起新文件（上一段 ${size(event.bytes)} 已保存）`;
+      }
       return event.reason === 'offline'
         ? `${name} 已下播，录制文件已保存（${size(event.bytes)}），开播后自动继续录制`
         : `${name}：录制已停止，已保存 ${event.fileName}（${size(event.bytes)}）`;
@@ -1318,13 +1354,49 @@ $('hevcBtn').addEventListener('click', () => {
   toast(preferHevc ? '已开启 H.265 省流，正在为支持的直播间切换' : '已改回 H.264');
 });
 
+// —— 自动清晰度（策略见 auto-quality.js）——
+// 手动选过清晰度的窗口会锁定；录制中的窗口保持当前档位，不被自动切换。
+function syncAutoQualityButton() {
+  const button = $('autoQualityBtn');
+  button.classList.toggle('on', autoQuality);
+  button.setAttribute('aria-pressed', String(autoQuality));
+  setToolbarButtonLabel(
+    button,
+    autoQuality ? '关闭自动清晰度' : '自动清晰度',
+    autoQuality
+      ? '自动清晰度已开启：主窗口优先高清，其余按窗口大小和卡顿情况调整；点击关闭'
+      : '开启自动清晰度：焦点/独听窗口优先高清，其余窗口按大小降档，丢帧或持续缓冲时逐级降低，稳定后再恢复'
+  );
+  tiles.forEach((tile) => tile.setAutoQuality(autoQuality));
+  autoQualityController.setEnabled(autoQuality);
+  syncBatchRates();
+}
+
+$('autoQualityBtn').addEventListener('click', () => {
+  autoQuality = !autoQuality;
+  syncAutoQualityButton();
+  save({ immediate: true });
+  toast(autoQuality
+    ? '已开启自动清晰度；手动选择清晰度的窗口会锁定，录制中的窗口保持当前清晰度'
+    : '已关闭自动清晰度，各窗口保持当前清晰度');
+});
+
+// 窗口尺寸、全屏变化都会改变目标档位
+new ResizeObserver(() => autoQualityController.refresh()).observe(grid);
+document.addEventListener('fullscreenchange', () => autoQualityController.refresh());
+
 // —— 批量清晰度 ——
+const BATCH_RATE_AUTO = '__auto__';
+
 function syncBatchRates() {
   const select = $('batchRateSelect');
   const names = [...new Set(tiles.flatMap((tile) => tile.availableRates.map((rate) => rate.name)).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'zh-CN'));
   select.replaceChildren(
     Object.assign(document.createElement('option'), { value: '', textContent: '批量清晰度' }),
+    ...(autoQuality && names.length
+      ? [Object.assign(document.createElement('option'), { value: BATCH_RATE_AUTO, textContent: '全部自动' })]
+      : []),
     ...names.map((name) => Object.assign(document.createElement('option'), { value: name, textContent: name }))
   );
   select.disabled = names.length === 0;
@@ -1333,11 +1405,18 @@ function syncBatchRates() {
 $('batchRateSelect').addEventListener('change', (event) => {
   const name = event.target.value;
   if (!name) return;
-  let success = 0;
-  for (const tile of tiles) if (tile.setRateByName(name)) success++;
-  const skipped = tiles.length - success;
   event.target.value = '';
-  toast(`已切换 ${success} 个窗口${skipped ? `，跳过 ${skipped} 个不支持窗口` : ''}`);
+  if (name === BATCH_RATE_AUTO) {
+    const locked = tiles.filter((tile) => tile.s.rateLocked);
+    locked.forEach((tile) => tile.setRateLocked(false));
+    toast(locked.length ? `已解除 ${locked.length} 个窗口的清晰度锁定，交给自动清晰度` : '所有窗口都已是自动清晰度');
+    return;
+  }
+  let success = 0;
+  // 自动清晰度开启时，批量指定也算手动选择，会锁定这些窗口。
+  for (const tile of tiles) if (tile.setRateByName(name, { lock: autoQuality })) success++;
+  const skipped = tiles.length - success;
+  toast(`已切换 ${success} 个窗口${skipped ? `，跳过 ${skipped} 个不支持窗口` : ''}${autoQuality && success ? '并锁定' : ''}`);
 });
 
 // —— 配置备份与导入（见 backup-ui.js）——
@@ -1556,6 +1635,7 @@ function refreshRoomStates() {
 document.addEventListener('visibilitychange', () => {
   tiles.forEach((tile) => tile.setPageVisible(!document.hidden));
   tiles.forEach(scheduleEco);
+  autoQualityController.setPageVisible(!document.hidden);
   if (!document.hidden) refreshRoomStates();
 });
 window.addEventListener('online', () => {

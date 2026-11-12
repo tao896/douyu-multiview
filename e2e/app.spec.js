@@ -855,6 +855,66 @@ test('H.265 toggle requests hevc streams, shows the codec and persists', async (
   await expect.poll(() => requests.some((item) => item.endsWith(':hevc'))).toBe(true);
 });
 
+test('auto quality lowers secondary windows, keeps the focus window high and locks manual picks', async ({ page }) => {
+  test.setTimeout(60_000);
+  await mockApplication(page);
+  // 每个房间最近一次 /api/stream 请求的档位
+  const lastRate = {};
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/stream') lastRate[url.searchParams.get('rid')] = url.searchParams.get('rate');
+  });
+  await page.goto('/');
+  for (const rid of ['100', '200']) {
+    await page.getByRole('textbox', { name: '添加直播间' }).fill(rid);
+    await page.getByRole('button', { name: '添加' }).click();
+  }
+  await expect(page.locator('article.tile')).toHaveCount(2);
+  const [first, second] = [page.locator('article.tile[data-rid="100"]'), page.locator('article.tile[data-rid="200"]')];
+  const rateOf = (tile) => tile.locator('[data-rate]');
+
+  const button = page.locator('#autoQualityBtn');
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect(rateOf(first).locator('option[value="auto"]')).toHaveCount(0);
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect(rateOf(first)).toHaveValue('auto');
+  await expect(rateOf(first)).toHaveClass(/\brate-auto\b/);
+
+  // 两个都不是主窗口：目标稳定 10 秒后降到较低档
+  await expect.poll(() => [lastRate['100'], lastRate['200']], { timeout: 25_000 }).toEqual(['2', '2']);
+  await expect(rateOf(first).locator('option[value="auto"]')).toHaveText('自动·高清');
+
+  // 设为焦点后很快升回最高档
+  await revealTileControls(first);
+  await first.getByRole('button', { name: '设为焦点画面' }).click();
+  await expect.poll(() => lastRate['100'], { timeout: 6_000 }).toBe('0');
+  await expect(rateOf(first)).toHaveAttribute('title', /主窗口优先高清/);
+
+  // 手动选档会锁定，刷新后仍保持
+  await revealTileControls(second);
+  await rateOf(second).selectOption('0');
+  await expect.poll(() => lastRate['200']).toBe('0');
+  await expect(rateOf(second)).toHaveValue('0');
+  await expect(rateOf(second)).toHaveClass(/\brate-locked\b/);
+  await expect(rateOf(second)).toHaveAttribute('title', /已锁定/);
+
+  await page.reload();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect(rateOf(second)).toHaveValue('0');
+  await expect(rateOf(second)).toHaveClass(/\brate-locked\b/);
+
+  // 批量「全部自动」解除锁定
+  await page.locator('#batchRateSelect').selectOption('__auto__');
+  await expect(rateOf(second)).toHaveValue('auto');
+  await expect(rateOf(second)).not.toHaveClass(/\brate-locked\b/);
+
+  // 关闭后去掉「自动」选项，各窗口保持当前档位
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect(rateOf(second).locator('option[value="auto"]')).toHaveCount(0);
+});
+
 // 模拟扩展页面：API 请求经 douyu-api 消息转回被 mock 的 /api，关注列表直接返回给定结果
 async function stubExtensionRuntime(page, followResponse) {
   await page.addInitScript((follow) => {

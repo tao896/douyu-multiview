@@ -148,6 +148,7 @@ export class Player {
     this.random = random;
     // 用户手动起播后即时收掉遮罩
     this.onPlaying = () => {
+      this.endBuffering();
       if (this.mp && !this.destroyed) {
         this.resetFrameSamples();
         if (!this.retryForce) this.emit('playing');
@@ -165,6 +166,7 @@ export class Player {
     this.onTimeUpdate = () => {
       if (this.destroyed || !this.mp || this.video.paused) return;
       if (this.video.currentTime > this.lastTime + 0.05) {
+        this.endBuffering();
         const now = Date.now();
         if (!this.stableSince || now - this.lastMove > STALL_MS) this.stableSince = now;
         this.lastTime = this.video.currentTime;
@@ -219,6 +221,10 @@ export class Player {
     this.lastReanchorAt = -Infinity;
     this.audioConfigChanges = 0;
     this.audioGapMs = 0;
+    // 卡顿统计（供自动清晰度判断持续缓冲）：stallMs 累计已结束的缓冲时长，不随重连清零。
+    this.stallMs = 0;
+    this.bufferingSince = 0;
+    this.connectedAt = 0;
     this.resetSyncSamples();
     this.onSeeking = () => {
       this.resetFrameSamples();
@@ -231,7 +237,9 @@ export class Player {
     };
     // 缓冲耗尽和开关声音都可能与不同步有关，记入诊断时间线。
     this.onWaiting = () => {
-      if (this.mp && !this.destroyed) this.recordSyncEvent('waiting');
+      if (!this.mp || this.destroyed) return;
+      this.recordSyncEvent('waiting');
+      if (!this.video.paused && !this.bufferingSince) this.bufferingSince = Date.now();
     };
     this.lastMuted = video.muted;
     this.onVolumeChange = () => {
@@ -295,6 +303,7 @@ export class Player {
       };
       mp = mpegts.createPlayer({ type: 'flv', isLive: true, url }, { ...CONFIG, audioFilterStats: this.audioFilterStats, recordTap });
       this.mp = mp;
+      this.connectedAt = Date.now();
       this.pendingAlignment = recovering;
       this.startFrameMonitor();
       mp.attachMediaElement(this.video);
@@ -367,6 +376,24 @@ export class Player {
     this.recentDroppedRatio = 0;
     this.renderLagSamples = [];
     this.renderLagSeconds = null;
+  }
+
+  endBuffering() {
+    if (!this.bufferingSince) return;
+    this.stallMs += Date.now() - this.bufferingSince;
+    this.bufferingSince = 0;
+  }
+
+  // 自动清晰度采样用的累计计数：帧数来自 getVideoPlaybackQuality（与诊断里的丢帧同源），
+  // 新连接会让帧计数归零，connectedAt 用来识别这种重置。
+  playbackCounters() {
+    const quality = this.video.getVideoPlaybackQuality?.();
+    return {
+      connectedAt: this.connectedAt,
+      totalFrames: quality?.totalVideoFrames || 0,
+      droppedFrames: quality?.droppedVideoFrames || 0,
+      stallMs: this.stallMs + (this.bufferingSince ? Date.now() - this.bufferingSince : 0),
+    };
   }
 
   // ct 为事件发生时的播放位置，便于和用户发现不同步的时刻对照。
@@ -956,6 +983,7 @@ export class Player {
       latencyChase: this.latencyChase,
       chasing: this.chasing,
       liveJumpCount: this.liveJumpCount,
+      stallMs: this.playbackCounters().stallMs,
       audioConfigChanges: this.audioConfigChanges,
       audioGapMs: this.audioGapMs,
       videoFps: this.videoFps,
@@ -967,6 +995,7 @@ export class Player {
   }
 
   teardown() {
+    this.endBuffering();
     this.recordOnly = false;
     this.stableSince = 0;
     this.frameEpoch++;
