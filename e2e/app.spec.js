@@ -764,3 +764,51 @@ test('follow import explains how to log in when the extension has no Douyu sessi
   await dialog.getByRole('button', { name: '取消' }).click();
   await expect(dialog).toBeHidden();
 });
+
+test('dragging a tile onto another swaps only those two windows', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('601 602 603');
+  await page.getByRole('button', { name: '添加' }).click();
+  await page.getByRole('button', { name: '批量' }).click();
+  await page.getByRole('button', { name: '选择已开播' }).click();
+  await page.getByRole('button', { name: '打开所选' }).click();
+  await page.getByRole('button', { name: '完成' }).click();
+  const tiles = page.locator('article.tile');
+  await expect(tiles).toHaveCount(3);
+  const order = () => tiles.evaluateAll((nodes) => nodes.map((node) => node.dataset.rid));
+  const before = await order();
+
+  const first = tiles.first();
+  await revealTileControls(first);
+  await first.locator('[data-drag-handle] .meta').dragTo(tiles.nth(2).locator('.stage'));
+  await expect.poll(order).toEqual([before[2], before[1], before[0]]);
+
+  // 刷新后保持互换后的顺序
+  await page.reload();
+  await expect(tiles).toHaveCount(3);
+  await expect.poll(order).toEqual([before[2], before[1], before[0]]);
+});
+
+test('fullscreen covers the whole tile so both toolbars stay available', async ({ page }) => {
+  await mockApplication(page);
+  await page.goto('/');
+  await page.getByRole('textbox', { name: '添加直播间' }).fill('700');
+  await page.getByRole('button', { name: '添加' }).click();
+  const tile = page.locator('article.tile');
+  await expect(tile).toBeVisible();
+
+  await revealTileControls(tile);
+  await tile.locator('[data-act="fullscreen"]').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.matches('article.tile') ?? false)).toBe(true);
+
+  await page.mouse.move(200, 200);
+  await page.mouse.move(220, 220);
+  await expect(tile).toHaveClass(/controls-visible/);
+  await expect(tile.locator('.tile-head')).toHaveCSS('opacity', '1');
+  await expect(tile.locator('.tile-foot')).toHaveCSS('opacity', '1');
+
+  // 全屏按钮再次点击退出全屏
+  await tile.locator('[data-act="fullscreen"]').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+});

@@ -200,7 +200,7 @@ export class Tile {
         focus: () => this.onFocus(this),
         pip: () => this.togglePictureInPicture(),
         expand: () => this.toggleExpand(),
-        fullscreen: () => this.el.querySelector('[data-stage]').requestFullscreen?.(),
+        fullscreen: () => this.toggleFullscreen(),
       };
       map[act]?.();
     });
@@ -263,6 +263,12 @@ export class Tile {
       this.pointerPressed = false;
       this.scheduleControlsHide();
     }, { signal });
+  }
+
+  // 整个窗口全屏（含上下工具栏），再点一次退出
+  toggleFullscreen() {
+    if (document.fullscreenElement === this.el) document.exitFullscreen?.();
+    else this.el.requestFullscreen?.();
   }
 
   showControls() {

@@ -867,6 +867,15 @@ body.room-dragging { user-select: none; cursor: grabbing; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
 }
 .tile.expanded { grid-column: span 2; grid-row: span 2; }
+/* 整个窗口全屏时播放区铺满屏幕，上下工具栏照常浮在画面上 */
+.tile:fullscreen {
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+}
+.tile:fullscreen .stage { height: 100%; aspect-ratio: auto; }
+.tile:fullscreen .tile-head { cursor: default; }
 .tile.dragging { opacity: .4; }
 .tile.drop-target { border-color: var(--accent); }
 .tile.sidebar-target { animation: sidebar-target 1.1s ease-out; }

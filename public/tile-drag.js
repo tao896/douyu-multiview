@@ -1,4 +1,5 @@
-// 播放窗口拖动排序：只能从标题栏把手拖起，放下后按网格中的 DOM 顺序回调 onReorder。
+// 播放窗口拖动换位：只能从标题栏把手拖起，放到另一个窗口上时两者互换位置，
+// 其余窗口不动；结束后按网格中的 DOM 顺序回调 onReorder。
 let dragging = null;
 
 export function makeTileDraggable(tile, { grid, onReorder }) {
@@ -28,9 +29,10 @@ export function makeTileDraggable(tile, { grid, onReorder }) {
     if (!dragging || dragging === tile) return;
     event.preventDefault();
     tile.el.classList.remove('drop-target');
-    const nodes = [...grid.children];
-    const from = nodes.indexOf(dragging.el);
-    const to = nodes.indexOf(tile.el);
-    grid.insertBefore(dragging.el, from < to ? tile.el.nextSibling : tile.el);
+    // 用占位节点交换两个窗口，相邻或不相邻都适用
+    const marker = document.createComment('');
+    dragging.el.replaceWith(marker);
+    tile.el.replaceWith(dragging.el);
+    marker.replaceWith(tile.el);
   });
 }
