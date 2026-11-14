@@ -995,7 +995,11 @@ export class Tile {
   }
 
   toggleExpand() {
-    this.s.expanded = !this.s.expanded;
+    this.setExpanded(!this.s.expanded);
+  }
+
+  setExpanded(on) {
+    this.s.expanded = !!on;
     this.el.classList.toggle('expanded', this.s.expanded);
     this.onChange();
   }

@@ -1,8 +1,8 @@
 // 播放窗口拖动换位：只能从标题栏把手拖起，放到另一个窗口上时两者互换位置，
-// 其余窗口不动；结束后按网格中的 DOM 顺序回调 onReorder。
+// 其余窗口不动；互换后回调 onSwap，结束后按网格中的 DOM 顺序回调 onReorder。
 let dragging = null;
 
-export function makeTileDraggable(tile, { grid, onReorder }) {
+export function makeTileDraggable(tile, { grid, onReorder, onSwap }) {
   const handle = tile.el.querySelector('[data-drag-handle]');
   handle.addEventListener('mousedown', () => (tile.el.draggable = true));
   handle.addEventListener('mouseup', () => (tile.el.draggable = false));
@@ -34,5 +34,6 @@ export function makeTileDraggable(tile, { grid, onReorder }) {
     dragging.el.replaceWith(marker);
     tile.el.replaceWith(dragging.el);
     marker.replaceWith(tile.el);
+    onSwap?.(dragging, tile);
   });
 }

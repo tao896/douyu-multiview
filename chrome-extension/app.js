@@ -1484,6 +1484,17 @@ function makeDraggable(tile) {
       tiles.forEach((item) => item.resume());
       save();
     },
+    // 放大和焦点画面跟着位置走：互换后由换到该位置的直播间接替
+    onSwap: (a, b) => {
+      if (!!a.s.expanded !== !!b.s.expanded) {
+        const aExpanded = !!a.s.expanded;
+        a.setExpanded(!!b.s.expanded);
+        b.setExpanded(aExpanded);
+      }
+      if (grid.dataset.layout !== 'focus') return;
+      if (a.el.classList.contains('focus-main')) applyLayout(b.s.rid);
+      else if (b.el.classList.contains('focus-main')) applyLayout(a.s.rid);
+    },
   });
 }
 
