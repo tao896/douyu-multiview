@@ -59,7 +59,31 @@ export function avatarFromIc(ic) {
   return `https://apic.douyucdn.cn/upload/${value.replace(/^\/+/, '')}_small.jpg`;
 }
 
-const DIAMOND_FAN_IMAGE = 'https://shark2.douyucdn.cn/front-publish/live-player-aside-master/assets/images/diamonds_banner_logo_c077d7b.gif';
+// chatmsg 帧 → 聊天窗显示所需的身份字段。字段含义参考斗鱼网页端：
+// bnn/bl 粉丝牌名称与等级，nl 贵族等级（nc=1 表示贵族身份有效），sl 至尊等级，
+// pg=5 超管，rg=4 房管，ail 含 453/454 为 VIP，diaf/cdiaf 钻粉（只认本房间的粉丝牌）
+export function chatFromFields(f, rid = '') {
+  const ail = unesc(f.ail);
+  return {
+    text: unesc(f.txt),
+    user: unesc(f.nn),
+    uid: String(f.uid || ''),
+    color: Number(f.col) || 0,
+    level: Number(f.level) || 0,
+    avatar: avatarFromIc(f.ic),
+    fansName: unesc(f.bnn),
+    fansLevel: Number(f.bl) || 0,
+    nobleLevel: Number(f.nl) || 0,
+    noble: f.nc === '1',
+    supremeLevel: Number(f.sl) || 0,
+    superAdmin: f.pg === '5',
+    roomAdmin: f.rg === '4',
+    vip: /(^|\/)45[34]\//.test(ail),
+    diamond: (Number(f.diaf) > 0 || Number(f.cdiaf) > 0) && String(f.brid || '') === String(rid),
+  };
+}
+
+const DIAMOND_FAN_IMAGE ='https://shark2.douyucdn.cn/front-publish/live-player-aside-master/assets/images/diamonds_banner_logo_c077d7b.gif';
 // 开通/续费钻粉：新版协议是 dfobc/dfrbc，旧版是 odfbc/rndfbc
 export const DIAMOND_FAN_TYPES = { dfobc: '开通钻粉', odfbc: '开通钻粉', dfrbc: '续费钻粉', rndfbc: '续费钻粉' };
 
@@ -279,13 +303,7 @@ export class DanmakuClient {
   handle(msg) {
     const type = /type@=([^/]*)/.exec(msg)?.[1];
     if (type === 'chatmsg') {
-      const f = parseFields(msg);
-      this.onChat({
-        text: unesc(f.txt),
-        user: unesc(f.nn),
-        color: Number(f.col) || 0,
-        level: Number(f.level) || 0,
-      });
+      this.onChat(chatFromFields(parseFields(msg), this.rid));
     } else if (type === 'dgb' || type === 'uenter') {
       const f = parseFields(msg);
       if (type === 'dgb') {

@@ -1,6 +1,7 @@
 // 右侧聊天窗：显示所选已打开直播间的实时弹幕；扩展版可用浏览器登录的斗鱼账号发弹幕
 import { isExtensionPage, sendExtensionMessage } from './net.js';
 import { ChatRanks } from './chat-ranks.js';
+import { chatIdentity, chatTextColor, DIAMOND_TEXT_COLOR } from './chat-badges.js';
 import { DANMAKU_LEVEL_OPTIONS } from './state.js';
 
 const MAX_MESSAGES = 200;
@@ -192,22 +193,22 @@ export class ChatPanel {
     if (stick) this.list.scrollTop = this.list.scrollHeight;
   }
 
+  // 行结构参考 danmu-helper.cn：身份标识 + 昵称：正文；超管、贵族/VIP 整行加底色
   renderChat(chat) {
     const item = document.createElement('div');
     item.className = 'chat-item';
-    if (chat.level > 0) {
-      const level = document.createElement('span');
-      level.className = 'chat-level';
-      level.textContent = `Lv${chat.level}`;
-      item.appendChild(level);
-    }
+    if (chat.superAdmin) item.classList.add('super');
+    else if (chat.noble || chat.vip || chat.supremeLevel) item.classList.add('noble');
     const user = document.createElement('span');
     user.className = 'chat-user';
-    user.textContent = `${chat.user || '匿名用户'}：`;
+    user.textContent = chat.user || '匿名用户';
     const text = document.createElement('span');
     text.className = 'chat-text';
     text.textContent = chat.text || '';
-    item.append(user, text);
+    const color = chatTextColor(chat.color);
+    if (color) text.style.color = color;
+    else if (chat.color === DIAMOND_TEXT_COLOR) text.classList.add('dia');
+    item.append(...chatIdentity(chat), user, '：', text);
     return item;
   }
 

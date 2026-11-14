@@ -9,6 +9,10 @@
 </head>
 <body>
 <svg class="icon-sprite" aria-hidden="true">
+  <!-- 聊天窗钻粉图标原图大部分半透明，放大不透明度后在深色背景上才看得清 -->
+  <filter id="chat-diamond-alpha" color-interpolation-filters="sRGB">
+    <feComponentTransfer><feFuncA type="linear" slope="7.5"/></feComponentTransfer>
+  </filter>
   <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="icon-copy" viewBox="0 0 24 24">
     <rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>
