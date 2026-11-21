@@ -194,6 +194,35 @@ function loadPropConfig(pid) {
   return entry.promise;
 }
 
+export function parseSingleGift(payload) {
+  const gift = payload?.data;
+  if (!gift?.name) return null;
+  const prefix = /^https?:\/\//i.test(gift.picUrlPrefix || '') ? gift.picUrlPrefix : 'https://gfs-op.douyucdn.cn/dygift';
+  return giftRecord(gift.id, gift, { prefix })[1];
+}
+
+// 活动、背包里送出的礼物（如精英令、花语礼盒）不在全局配置和房间礼物列表里，按 gid 单独查标价；
+// 缓存策略与背包道具一致。
+const singleSources = new Map();
+function loadSingleGiftConfig(gid) {
+  const key = String(gid || '').trim();
+  if (!/^\d{1,12}$/.test(key)) return Promise.resolve(null);
+  const previous = singleSources.get(key);
+  if (previous && Date.now() < previous.expires) return previous.promise;
+  const entry = { expires: Date.now() + PROP_TTL };
+  entry.promise = fetch(`https://gift.douyucdn.cn/api/gift/v1/web/single?gid=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(8000) })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return parseSingleGift(await response.json());
+    })
+    .catch(() => {
+      entry.expires = Date.now() + PROP_RETRY;
+      return null;
+    });
+  singleSources.set(key, entry);
+  return entry.promise;
+}
+
 // 鱼丸礼物（价格 0）原站固定 5e3，不看 hitInterval
 function popupDuration(interval, price) {
   if (price === 0) return 5000;
@@ -210,9 +239,11 @@ export async function resolveGift(gift, rid = '') {
   const [globalConfig, roomConfig] = await Promise.all([loadGiftConfig(), loadRoomGiftConfig(rid)]);
   const roomGift = roomConfig.get(String(gift.id));
   const globalGift = globalConfig.get(String(gift.id));
-  const config = roomGift || globalGift;
+  // 两处都没有标价时再查单个礼物接口
+  const singleGift = (roomGift?.price ?? globalGift?.price) == null ? await loadSingleGiftConfig(gift.id) : null;
+  const config = roomGift || globalGift || singleGift;
   // value 是单个礼物的鱼翅价格；房间源（如活动兑换）没有标价时退回全局配置
-  const value = roomGift?.price ?? globalGift?.price ?? gift.value ?? null;
-  const interval = roomGift?.hitInterval ?? globalGift?.hitInterval ?? null;
+  const value = roomGift?.price ?? globalGift?.price ?? singleGift?.price ?? gift.value ?? null;
+  const interval = roomGift?.hitInterval ?? globalGift?.hitInterval ?? singleGift?.hitInterval ?? null;
   return { ...gift, giftName: config?.name || gift.giftName, image: config?.image || gift.image || '', value, durationMs: popupDuration(interval, value), meta: config?.svga ? { svga: config.svga, image: config.image || gift.image || '' } : undefined };
 }
